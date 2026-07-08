@@ -127,8 +127,10 @@ fatjar                 → Standalone fat-JAR launcher (built separately, not in
 ```
 
 Test fragments (`eclipse-test-plugin`, run by tycho-surefire inside a live OSGi
-framework): `com.kk.pde.ds.imp.tests` (Greet) and `com.kk.pde.ds.mcp.api.tests` (the
-shared `Json` parser).
+framework): `com.kk.pde.ds.imp.tests` (Greet), `com.kk.pde.ds.mcp.api.tests` (the
+shared `Json` parser), and `com.kk.pde.ds.spike.tests` (hosted by `spike.master`;
+covers the `DockLayout` grid math, the ECF-serialized value objects, and
+`CatalogServiceImpl` state).
 
 ## REST API
 

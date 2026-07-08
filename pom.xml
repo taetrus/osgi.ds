@@ -123,6 +123,7 @@
 		<module>com.kk.pde.ds.spike.api</module>
 		<module>com.kk.pde.ds.spike.master</module>
 		<module>com.kk.pde.ds.spike.detail</module>
+		<module>com.kk.pde.ds.spike.tests</module>
 		<module>com.kk.pde.ds.feature</module>
 		<module>distribution</module>
 	</modules>

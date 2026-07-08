@@ -1,0 +1,9 @@
+Manifest-Version: 1.0
+Bundle-ManifestVersion: 2
+Bundle-Name: com.kk.pde.ds.spike.tests
+Bundle-SymbolicName: com.kk.pde.ds.spike.tests
+Bundle-Version: 1.0.0.qualifier
+Fragment-Host: com.kk.pde.ds.spike.master
+Bundle-RequiredExecutionEnvironment: JavaSE-17
+Require-Bundle: junit-jupiter-api;bundle-version="[5.12,6.0)",
+ junit-jupiter-engine;bundle-version="[5.12,6.0)"
