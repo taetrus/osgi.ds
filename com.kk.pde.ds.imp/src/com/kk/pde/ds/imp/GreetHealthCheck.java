@@ -44,12 +44,8 @@ public class GreetHealthCheck implements HealthCheck {
         log.debug("Executing Greet Service Health Check");
 
         try {
-            if (greetService == null) {
-                resultLog.critical("IGreet service is not available");
-                return new Result(resultLog);
-            }
-
-            // Try to invoke the service
+            // greetService is a mandatory (1..1) static reference — SCR guarantees it is
+            // non-null while this component is active, so no null check is needed here.
             greetService.greet();
 
             resultLog.info("IGreet service is available and operational");

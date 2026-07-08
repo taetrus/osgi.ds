@@ -136,10 +136,29 @@ public class OpenAiEmbeddingClient implements EmbeddingClient {
 			String msg = error != null ? String.valueOf(error.get("message")) : "no 'data' field";
 			throw new IllegalStateException("embeddings error: " + msg);
 		}
-		List<float[]> result = new ArrayList<float[]>(data.size());
+		// Place each vector at its reported "index" rather than trusting array order.
+		// The OpenAI embeddings contract guarantees an index per entry; honoring it
+		// keeps chunks aligned with their vectors even if the server reorders or drops
+		// entries. Any gap or out-of-range index fails the whole batch (returned as
+		// empty upstream, which pads with nulls) rather than silently mis-storing.
+		float[][] slots = new float[expected][];
 		for (Object item : data) {
 			Map<String, Object> entry = Json.asObject(item);
-			List<Object> vec = entry != null ? Json.asArray(entry.get("embedding")) : null;
+			if (entry == null) {
+				throw new IllegalStateException("data entry is not an object");
+			}
+			Object idxVal = entry.get("index");
+			if (!(idxVal instanceof Number)) {
+				throw new IllegalStateException("data entry missing numeric 'index'");
+			}
+			int index = ((Number) idxVal).intValue();
+			if (index < 0 || index >= expected) {
+				throw new IllegalStateException("embedding index " + index + " out of range [0," + expected + ")");
+			}
+			if (slots[index] != null) {
+				throw new IllegalStateException("duplicate embedding index " + index);
+			}
+			List<Object> vec = Json.asArray(entry.get("embedding"));
 			if (vec == null) {
 				throw new IllegalStateException("missing 'embedding' in data entry");
 			}
@@ -147,10 +166,15 @@ public class OpenAiEmbeddingClient implements EmbeddingClient {
 			for (int k = 0; k < vec.size(); k++) {
 				arr[k] = ((Number) vec.get(k)).floatValue();
 			}
-			result.add(arr);
+			slots[index] = arr;
 		}
-		if (result.size() != expected) {
-			LOG.warn("Expected {} embeddings, got {}", expected, result.size());
+		List<float[]> result = new ArrayList<float[]>(expected);
+		for (int i = 0; i < expected; i++) {
+			if (slots[i] == null) {
+				throw new IllegalStateException("missing embedding for index " + i
+					+ " (got " + data.size() + " of " + expected + ")");
+			}
+			result.add(slots[i]);
 		}
 		return result;
 	}
@@ -175,9 +199,15 @@ public class OpenAiEmbeddingClient implements EmbeddingClient {
 			os.close();
 
 			int status = conn.getResponseCode();
-			BufferedReader reader = new BufferedReader(new InputStreamReader(
-				status >= 200 && status < 300 ? conn.getInputStream() : conn.getErrorStream(),
-				"UTF-8"));
+			java.io.InputStream stream = (status >= 200 && status < 300)
+				? conn.getInputStream() : conn.getErrorStream();
+			if (stream == null) {
+				// Some failure modes (e.g. certain 4xx, proxy errors) carry no body;
+				// getErrorStream() then returns null. Guard against the NPE.
+				LOG.error("Embeddings endpoint returned HTTP {} with no body", status);
+				return null;
+			}
+			BufferedReader reader = new BufferedReader(new InputStreamReader(stream, "UTF-8"));
 			StringBuilder sb = new StringBuilder();
 			String line;
 			while ((line = reader.readLine()) != null) {
@@ -186,6 +216,7 @@ public class OpenAiEmbeddingClient implements EmbeddingClient {
 			reader.close();
 			if (status < 200 || status >= 300) {
 				LOG.error("Embeddings endpoint returned HTTP {}: {}", status, sb);
+				return null;
 			}
 			return sb.toString();
 		} catch (IOException e) {

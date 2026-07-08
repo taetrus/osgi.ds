@@ -192,6 +192,78 @@
 				</dependency>
 			</dependencies>
 		</location>
+		<!-- JUnit 5 (Jupiter) — test bundles for the eclipse-test-plugin fragments.
+		     Modern JUnit 5 jars ship valid OSGi manifests, so missingManifest="error".
+		     Enumerated explicitly (depth="none") like the other locations, so the exact
+		     bundle set is visible and reproducible. -->
+		<location includeDependencyDepth="none" includeDependencyScopes="compile" missingManifest="error" type="Maven">
+			<dependencies>
+				<dependency>
+					<groupId>org.junit.jupiter</groupId>
+					<artifactId>junit-jupiter-api</artifactId>
+					<version>5.12.2</version>
+					<type>jar</type>
+				</dependency>
+				<dependency>
+					<groupId>org.junit.jupiter</groupId>
+					<artifactId>junit-jupiter-engine</artifactId>
+					<version>5.12.2</version>
+					<type>jar</type>
+				</dependency>
+				<dependency>
+					<groupId>org.junit.platform</groupId>
+					<artifactId>junit-platform-commons</artifactId>
+					<version>1.12.2</version>
+					<type>jar</type>
+				</dependency>
+				<dependency>
+					<groupId>org.junit.platform</groupId>
+					<artifactId>junit-platform-engine</artifactId>
+					<version>1.12.2</version>
+					<type>jar</type>
+				</dependency>
+				<dependency>
+					<groupId>org.junit.platform</groupId>
+					<artifactId>junit-platform-launcher</artifactId>
+					<version>1.12.2</version>
+					<type>jar</type>
+				</dependency>
+				<dependency>
+					<groupId>org.opentest4j</groupId>
+					<artifactId>opentest4j</artifactId>
+					<version>1.3.0</version>
+					<type>jar</type>
+				</dependency>
+				<dependency>
+					<groupId>org.apiguardian</groupId>
+					<artifactId>apiguardian-api</artifactId>
+					<version>1.1.2</version>
+					<type>jar</type>
+				</dependency>
+				<!-- Equinox launcher — tycho-surefire boots a real OSGi framework to run
+				     the eclipse-test-plugin tests, and needs the launcher on the platform. -->
+				<dependency>
+					<groupId>org.eclipse.platform</groupId>
+					<artifactId>org.eclipse.equinox.launcher</artifactId>
+					<version>1.6.900</version>
+					<type>jar</type>
+				</dependency>
+			</dependencies>
+		</location>
+		<!-- Eclipse test harness — tycho-surefire runs the eclipse-test-plugin inside a
+		     live Equinox instance, which needs org.eclipse.core.runtime and its transitive
+		     closure (app/registry/preferences/contenttype/…). Pulled at depth="infinite"
+		     since this graph is only for the test runtime, never shipped in the product. -->
+		<location includeDependencyDepth="infinite" includeDependencyScopes="compile" missingManifest="error" type="Maven">
+			<dependencies>
+				<dependency>
+					<groupId>org.eclipse.platform</groupId>
+					<artifactId>org.eclipse.core.runtime</artifactId>
+					<version>3.33.0</version>
+					<type>jar</type>
+				</dependency>
+			</dependencies>
+		</location>
 		<!-- Eclipse Communication Framework (ECF) — OSGi Remote Services (RSA) -->
 		<!-- ECF 3.14.x line: last release with JavaSE-1.8 BREEs (resolves on the Java 21 runtime). -->
 		<location includeDependencyDepth="none" includeDependencyScopes="compile" missingManifest="error" type="Maven">

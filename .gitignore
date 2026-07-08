@@ -1,6 +1,10 @@
 # Maven / Tycho build output
 target/
 *.jar
+# ...but the chatbot's embedded commonmark jars are checked in (Bundle-ClassPath needs
+# them). Without this exception, an upgraded jar would be silently ignored and the
+# bundle would fail at runtime with no build error.
+!com.kk.pde.ds.chatbot/lib/*.jar
 *.war
 *.ear
 *.zip

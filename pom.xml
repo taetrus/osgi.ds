@@ -107,11 +107,11 @@
 		<module>com.kk.pde.ds.target</module>
 		<module>com.kk.pde.ds.api</module>
 		<module>com.kk.pde.ds.imp</module>
-		<!-- Test module disabled until JUnit 5 bundles are added to target platform -->
-		<!-- <module>com.kk.pde.ds.imp.tests</module> -->
+		<module>com.kk.pde.ds.imp.tests</module>
 		<module>com.kk.pde.ds.app</module>
 		<module>com.kk.pde.ds.rest</module>
 		<module>com.kk.pde.ds.mcp.api</module>
+		<module>com.kk.pde.ds.mcp.api.tests</module>
 		<module>com.kk.pde.ds.mcp.server</module>
 		<module>com.kk.pde.ds.mcp.client</module>
 		<module>com.kk.pde.ds.mcp.llm</module>

@@ -1,5 +1,6 @@
 package com.kk.pde.ds.ecf.consumer;
 
+import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
 import org.osgi.service.component.annotations.Reference;
 import org.osgi.service.component.annotations.ReferenceCardinality;
@@ -31,24 +32,53 @@ import com.kk.pde.ds.ecf.api.IRemoteGreet;
  * is mandatory so the component only activates once the remote service is
  * actually available.
  * </p>
+ *
+ * <p>
+ * The bind method only stores the proxy — the actual {@code greet("ECF")} call is
+ * a network round-trip and runs from {@code @Activate} on a dedicated thread, so a
+ * slow or stalled host cannot block SCR's actor thread (which would delay activation
+ * of every other component in the framework).
+ * </p>
  */
 @Component
 public class RemoteGreetConsumer {
 
 	private static final Logger log = LoggerFactory.getLogger(RemoteGreetConsumer.class);
 
+	private volatile IRemoteGreet greet;
+
 	@Reference(policy = ReferencePolicy.DYNAMIC, cardinality = ReferenceCardinality.MANDATORY)
 	public void bindGreet(IRemoteGreet greet) {
-		log.info("Remote IRemoteGreet bound (proxy class: {}) — invoking greet(\"ECF\")...", greet.getClass().getName());
-		try {
-			String response = greet.greet("ECF");
-			log.info("Remote response: {}", response);
-		} catch (Exception e) {
-			log.error("Remote invocation failed", e);
-		}
+		this.greet = greet;
+		log.info("Remote IRemoteGreet bound (proxy class: {})", greet.getClass().getName());
 	}
 
 	public void unbindGreet(IRemoteGreet greet) {
+		if (this.greet == greet) {
+			this.greet = null;
+		}
 		log.info("Remote IRemoteGreet unbound");
+	}
+
+	@Activate
+	public void activate() {
+		final IRemoteGreet proxy = greet; // MANDATORY reference: bound before activate
+		Thread t = new Thread(new Runnable() {
+			@Override
+			public void run() {
+				if (proxy == null) {
+					return;
+				}
+				log.info("Invoking remote greet(\"ECF\")...");
+				try {
+					String response = proxy.greet("ECF");
+					log.info("Remote response: {}", response);
+				} catch (Exception e) {
+					log.error("Remote invocation failed", e);
+				}
+			}
+		}, "ecf-consumer-greet");
+		t.setDaemon(true);
+		t.start();
 	}
 }

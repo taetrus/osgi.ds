@@ -19,6 +19,7 @@ import java.util.zip.ZipInputStream;
 import javax.imageio.ImageIO;
 
 import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.io.MemoryUsageSetting;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDResources;
@@ -122,7 +123,9 @@ public class MultiFormatDocumentParser implements DocumentParser {
 	// ---- PDF ---------------------------------------------------------------
 
 	private String extractPdf(Path file) throws IOException {
-		PDDocument doc = PDDocument.load(file.toFile());
+		// Stream scratch data to temp files rather than holding the whole document in
+		// heap, so a very large PDF can't OOM the process.
+		PDDocument doc = PDDocument.load(file.toFile(), MemoryUsageSetting.setupTempFileOnly());
 		try {
 			boolean useOcr = ocr != null && ocr.isAvailable();
 			if (!useOcr) {
@@ -384,11 +387,20 @@ public class MultiFormatDocumentParser implements DocumentParser {
 		return new String(readEntryBytes(zip), StandardCharsets.UTF_8);
 	}
 
+	/** Cap on a single decompressed OOXML entry — bounds heap against a zip bomb. */
+	private static final long MAX_ENTRY_BYTES = 64L * 1024 * 1024;
+
 	private static byte[] readEntryBytes(ZipInputStream zip) throws IOException {
 		ByteArrayOutputStream bos = new ByteArrayOutputStream();
 		byte[] buf = new byte[8192];
+		long total = 0;
 		int n;
 		while ((n = zip.read(buf)) != -1) {
+			total += n;
+			if (total > MAX_ENTRY_BYTES) {
+				throw new IOException("OOXML entry exceeds " + (MAX_ENTRY_BYTES / (1024 * 1024))
+					+ " MB cap (possible zip bomb)");
+			}
 			bos.write(buf, 0, n);
 		}
 		return bos.toByteArray();

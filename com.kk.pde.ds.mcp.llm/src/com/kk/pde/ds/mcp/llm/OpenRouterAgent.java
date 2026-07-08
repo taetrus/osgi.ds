@@ -7,6 +7,7 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -22,6 +23,7 @@ import org.slf4j.LoggerFactory;
 
 import com.kk.pde.ds.mcp.api.IMcpTool;
 import com.kk.pde.ds.mcp.api.IMcpToolRegistry;
+import com.kk.pde.ds.mcp.api.Json;
 
 /**
  * Bridges the OSGi MCP tool registry to the OpenRouter API (OpenAI-compatible).
@@ -55,8 +57,6 @@ public class OpenRouterAgent {
 	private static final Pattern CITATION_LINE = Pattern.compile("^\\s*\\[\\d+\\]\\s+(.*)$");
 
 	private IMcpToolRegistry registry;
-	private String apiKeyOverride;
-	private String baseUrlOverride;
 
 	@Activate
 	public void activate() {
@@ -68,58 +68,61 @@ public class OpenRouterAgent {
 		this.registry = registry;
 	}
 
-	/** Set an API key override (takes priority over system property and env var). */
-	public void setApiKey(String apiKey) {
-		this.apiKeyOverride = apiKey;
-	}
-
 	/**
-	 * Set a base URL override. Takes priority over the {@code openrouter.base.url}
-	 * system property and the built-in default.
-	 */
-	public void setBaseUrl(String baseUrl) {
-		this.baseUrlOverride = baseUrl;
-	}
-
-	/**
-	 * Run an agent conversation. Tools are auto-discovered from the OSGi registry.
-	 *
-	 * @param userMessage  the user's prompt
-	 * @param modelOverride  optional model ID; null/empty uses system property or default
-	 * @return final text answer from the LLM
+	 * Run an agent conversation using the ambient credentials
+	 * ({@code -Dopenrouter.*} / {@code OPENROUTER_API_KEY}). Tools are auto-discovered
+	 * from the OSGi registry.
 	 */
 	public String chat(String userMessage, String modelOverride) {
-		String apiKey = resolveApiKey();
-		if (apiKey.isEmpty()) {
-			return "Error: No API key found. Set OPENROUTER_API_KEY env var "
-				+ "or start with -Dopenrouter.api.key=your_key";
-		}
+		return chat(userMessage, modelOverride, null, null);
+	}
 
+	/**
+	 * Run an agent conversation with an explicit key and base URL (e.g. from the
+	 * Swing chatbot's saved settings). Passing them as arguments — rather than
+	 * mutating shared instance state — keeps concurrent callers (the Swing UI and the
+	 * {@code /llm/chat} servlet, which share this DS singleton) isolated from one another.
+	 *
+	 * @param apiKey   key to use, or null/empty to fall back to system property / env var
+	 * @param baseUrl  base URL to use, or null/empty to fall back to system property / default
+	 */
+	public String chat(String userMessage, String modelOverride, String apiKey, String baseUrl) {
 		String model = (modelOverride != null && !modelOverride.isEmpty())
 			? modelOverride
 			: System.getProperty("openrouter.model", DEFAULT_MODEL);
 
 		List<String> messages = new ArrayList<String>();
-		messages.add("{\"role\":\"user\",\"content\":\"" + LlmJsonUtil.escape(userMessage) + "\"}");
+		messages.add(Json.stringify(userMessageJson(userMessage)));
 
-		return chatWithHistory(messages, model);
+		return chatWithHistory(messages, model, apiKey, baseUrl);
 	}
 
 	/**
-	 * Run an agent conversation with externally-managed message history.
-	 * The caller provides the full message list (including prior user/assistant messages).
-	 * New messages generated during tool-call loops are appended to the provided list.
-	 *
-	 * @param messages  mutable list of JSON message strings (caller retains reference)
-	 * @param model     model ID to use
-	 * @return final text answer from the LLM, or error string
+	 * Run an agent conversation with externally-managed history and ambient credentials.
 	 */
 	public String chatWithHistory(List<String> messages, String model) {
-		String apiKey = resolveApiKey();
+		return chatWithHistory(messages, model, null, null);
+	}
+
+	/**
+	 * Run an agent conversation with externally-managed message history and explicit
+	 * credentials. The caller provides the full message list (including prior
+	 * user/assistant messages); new messages from tool-call loops are appended to it.
+	 *
+	 * @param messages     mutable list of JSON message strings (caller retains reference)
+	 * @param model        model ID to use
+	 * @param apiKeyOverride key to use, or null/empty to fall back to system property / env var
+	 * @param baseUrlOverride base URL to use, or null/empty to fall back to system property / default
+	 * @return final text answer from the LLM, or error string
+	 */
+	public String chatWithHistory(List<String> messages, String model,
+			String apiKeyOverride, String baseUrlOverride) {
+		String apiKey = resolveApiKey(apiKeyOverride);
 		if (apiKey.isEmpty()) {
 			return "Error: No API key found. Set OPENROUTER_API_KEY env var "
 				+ "or start with -Dopenrouter.api.key=your_key";
 		}
+		String baseUrl = resolveBaseUrl(baseUrlOverride);
 
 		if (model == null || model.isEmpty()) {
 			model = System.getProperty("openrouter.model", DEFAULT_MODEL);
@@ -134,7 +137,7 @@ public class OpenRouterAgent {
 
 		for (int turn = 0; turn < MAX_TURNS; turn++) {
 			String requestBody = buildRequest(model, messages, toolsJson);
-			String response = post(apiKey, requestBody);
+			String response = post(apiKey, baseUrl, requestBody);
 
 			if (response == null) {
 				return "Error: failed to reach OpenRouter API";
@@ -142,56 +145,63 @@ public class OpenRouterAgent {
 
 			LOG.debug("OpenRouter response (turn {}): {}", turn, response);
 
-			String choices = LlmJsonUtil.getObject(response, "choices");
-			String firstChoice = LlmJsonUtil.getFirstInArray(choices);
+			Object root;
+			try {
+				root = Json.parse(response);
+			} catch (Json.JsonException e) {
+				LOG.error("Failed to parse OpenRouter response: {}", e.getMessage());
+				return "Error: unexpected response format from OpenRouter";
+			}
 
-			if (firstChoice == null) {
-				String errorBlock = LlmJsonUtil.getObject(response, "error");
+			List<Object> choices = Json.asList(Json.get(root, "choices"));
+			if (choices == null || choices.isEmpty()) {
+				Object errorBlock = Json.get(root, "error");
 				if (errorBlock != null) {
-					String errMsg = LlmJsonUtil.getString(errorBlock, "message");
-					return "Error from OpenRouter: " + errMsg;
+					return "Error from OpenRouter: " + Json.getString(errorBlock, "message");
 				}
 				return "Error: unexpected response format from OpenRouter";
 			}
 
-			String finishReason = LlmJsonUtil.getString(firstChoice, "finish_reason");
-			String message = LlmJsonUtil.getObject(firstChoice, "message");
+			Object firstChoice = choices.get(0);
+			String finishReason = Json.getString(firstChoice, "finish_reason");
+			Object message = Json.get(firstChoice, "message");
 
 			if ("stop".equals(finishReason) || finishReason == null) {
-				String content = LlmJsonUtil.getString(message, "content");
+				String content = Json.getString(message, "content");
 				if (content != null) {
-					messages.add("{\"role\":\"assistant\",\"content\":\""
-						+ LlmJsonUtil.escape(content) + "\"}");
+					messages.add(Json.stringify(assistantMessage(content)));
 				}
 				String answer = content != null ? content : "(no content in response)";
 				return appendReferences(answer, referencedDocs);
 			}
 
 			if ("tool_calls".equals(finishReason)) {
-				String toolCallsArray = LlmJsonUtil.getObject(message, "tool_calls");
-				String firstCall = LlmJsonUtil.getFirstInArray(toolCallsArray);
-				if (firstCall == null) {
+				List<Object> toolCalls = Json.asList(Json.get(message, "tool_calls"));
+				if (toolCalls == null || toolCalls.isEmpty()) {
 					return "Error: tool_calls array is empty";
 				}
 
-				String callId = LlmJsonUtil.getString(firstCall, "id");
-				String function = LlmJsonUtil.getObject(firstCall, "function");
-				String toolName = LlmJsonUtil.getString(function, "name");
-				String argsJson = extractArguments(function);
+				// One assistant message must echo ALL tool calls, followed by one tool
+				// result per call — appending only the first breaks strict providers.
+				messages.add(buildAssistantToolCallsMessage(toolCalls));
 
-				LOG.info("Tool call: {} args={}", toolName, argsJson);
-				messages.add(buildAssistantToolCallMessage(callId, toolName, argsJson));
+				for (Object call : toolCalls) {
+					String callId = Json.getString(call, "id");
+					Object function = Json.get(call, "function");
+					String toolName = Json.getString(function, "name");
+					Map<String, String> args = parseArguments(function);
 
-				String toolResult = executeTool(toolName, argsJson);
-				LOG.info("Tool result for {}: {}", toolName, toolResult);
+					LOG.info("Tool call: {} args={}", toolName, Json.stringify(args));
 
-				if (DOC_SEARCH_TOOL.equals(toolName)) {
-					collectDocumentReferences(toolResult, referencedDocs);
+					String toolResult = executeTool(toolName, args);
+					LOG.info("Tool result for {}: {}", toolName, toolResult);
+
+					if (DOC_SEARCH_TOOL.equals(toolName)) {
+						collectDocumentReferences(toolResult, referencedDocs);
+					}
+
+					messages.add(Json.stringify(toolMessage(callId, toolResult)));
 				}
-
-				messages.add("{\"role\":\"tool\",\"tool_call_id\":\""
-					+ LlmJsonUtil.escape(callId) + "\",\"content\":\""
-					+ LlmJsonUtil.escape(toolResult) + "\"}");
 			} else {
 				LOG.warn("Unexpected finish_reason: {}", finishReason);
 				break;
@@ -201,13 +211,12 @@ public class OpenRouterAgent {
 		return "Error: maximum turns (" + MAX_TURNS + ") reached without a final answer";
 	}
 
-	private String executeTool(String toolName, String argsJson) {
+	private String executeTool(String toolName, Map<String, String> args) {
 		IMcpTool tool = registry.getTool(toolName);
 		if (tool == null) {
 			return "Error: unknown tool '" + toolName + "'";
 		}
 		try {
-			Map<String, String> args = LlmJsonUtil.parseFlat(argsJson);
 			return tool.execute(args);
 		} catch (Exception e) {
 			LOG.error("Tool execution failed: {}", toolName, e);
@@ -272,8 +281,8 @@ public class OpenRouterAgent {
 			if (i > 0) sb.append(",");
 			IMcpTool tool = tools.get(i);
 			sb.append("{\"type\":\"function\",\"function\":{");
-			sb.append("\"name\":\"").append(LlmJsonUtil.escape(tool.getName())).append("\",");
-			sb.append("\"description\":\"").append(LlmJsonUtil.escape(tool.getDescription())).append("\",");
+			sb.append("\"name\":\"").append(Json.escape(tool.getName())).append("\",");
+			sb.append("\"description\":\"").append(Json.escape(tool.getDescription())).append("\",");
 			sb.append("\"parameters\":").append(tool.getInputSchema());
 			sb.append("}}");
 		}
@@ -283,7 +292,7 @@ public class OpenRouterAgent {
 
 	private String buildRequest(String model, List<String> messages, String toolsJson) {
 		StringBuilder sb = new StringBuilder("{");
-		sb.append("\"model\":\"").append(LlmJsonUtil.escape(model)).append("\",");
+		sb.append("\"model\":\"").append(Json.escape(model)).append("\",");
 		sb.append("\"messages\":[");
 		for (int i = 0; i < messages.size(); i++) {
 			if (i > 0) sb.append(",");
@@ -297,44 +306,104 @@ public class OpenRouterAgent {
 	}
 
 	/**
-	 * Extract tool call arguments, handling both string and object formats.
-	 * Some models return "arguments":"{}" (string), others return "arguments":{} (object).
-	 * Some return "arguments":"" (empty string). Normalizes all to valid JSON.
+	 * Extract tool-call arguments into a flat string map for {@link IMcpTool#execute},
+	 * handling both formats models emit: {@code "arguments":"{...}"} (a JSON string, the
+	 * OpenAI standard) and {@code "arguments":{...}} (a JSON object, which several
+	 * OpenRouter models produce). Scalars become their textual form; nested values are
+	 * re-serialized to JSON so a tool that opts into structured input still gets it.
 	 */
-	private String extractArguments(String functionJson) {
-		// Try as string first (OpenAI standard: "arguments":"{...}")
-		String args = LlmJsonUtil.getString(functionJson, "arguments");
-		if (args != null && !args.trim().isEmpty()) {
-			return args;
+	private Map<String, String> parseArguments(Object function) {
+		Map<String, Object> obj = argumentsObject(function);
+		Map<String, String> flat = new LinkedHashMap<String, String>();
+		for (Map.Entry<String, Object> e : obj.entrySet()) {
+			Object v = e.getValue();
+			if (v instanceof Map || v instanceof List) {
+				flat.put(e.getKey(), Json.stringify(v));
+			} else {
+				flat.put(e.getKey(), Json.asString(v));
+			}
 		}
-		// Try as object (some models: "arguments":{...})
-		args = LlmJsonUtil.getObject(functionJson, "arguments");
-		if (args != null && !args.trim().isEmpty()) {
-			return args;
-		}
-		return "{}";
+		return flat;
 	}
 
-	private String buildAssistantToolCallMessage(String callId, String toolName, String argsJson) {
-		// Ensure argsJson is valid JSON for the arguments field
-		if (argsJson == null || argsJson.trim().isEmpty()) {
-			argsJson = "{}";
+	/** Normalize a function's {@code arguments} (string- or object-form) to a map. */
+	private Map<String, Object> argumentsObject(Object function) {
+		Object args = Json.get(function, "arguments");
+		if (args instanceof Map) {
+			return Json.asObject(args);
 		}
-		return "{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{"
-			+ "\"id\":\"" + LlmJsonUtil.escape(callId) + "\","
-			+ "\"type\":\"function\","
-			+ "\"function\":{\"name\":\"" + LlmJsonUtil.escape(toolName) + "\","
-			+ "\"arguments\":\"" + LlmJsonUtil.escape(argsJson) + "\"}"
-			+ "}]}";
+		if (args instanceof String) {
+			String s = ((String) args).trim();
+			if (!s.isEmpty()) {
+				try {
+					Map<String, Object> parsed = Json.asObject(Json.parse(s));
+					if (parsed != null) {
+						return parsed;
+					}
+				} catch (Json.JsonException ignored) {
+					// malformed arguments — fall through to empty
+				}
+			}
+		}
+		return new LinkedHashMap<String, Object>();
 	}
 
 	/**
-	 * Resolve the API key from system property or environment variable.
-	 * Priority: -Dopenrouter.api.key > OPENROUTER_API_KEY env var.
+	 * Build the assistant message that echoes every tool call the model requested.
+	 * Arguments are re-serialized to a JSON string, the format the OpenAI/OpenRouter
+	 * protocol expects on the assistant turn.
 	 */
-	private String resolveApiKey() {
-		if (apiKeyOverride != null && !apiKeyOverride.isEmpty()) {
-			return apiKeyOverride;
+	private String buildAssistantToolCallsMessage(List<Object> toolCalls) {
+		List<Object> normalized = new ArrayList<Object>();
+		for (Object call : toolCalls) {
+			Map<String, Object> function = new LinkedHashMap<String, Object>();
+			function.put("name", Json.getString(call, "name") != null
+				? Json.getString(call, "name")
+				: Json.getString(Json.get(call, "function"), "name"));
+			function.put("arguments", Json.stringify(argumentsObject(Json.get(call, "function"))));
+
+			Map<String, Object> entry = new LinkedHashMap<String, Object>();
+			entry.put("id", Json.getString(call, "id"));
+			entry.put("type", "function");
+			entry.put("function", function);
+			normalized.add(entry);
+		}
+		Map<String, Object> msg = new LinkedHashMap<String, Object>();
+		msg.put("role", "assistant");
+		msg.put("content", null);
+		msg.put("tool_calls", normalized);
+		return Json.stringify(msg);
+	}
+
+	private Map<String, Object> userMessageJson(String content) {
+		Map<String, Object> msg = new LinkedHashMap<String, Object>();
+		msg.put("role", "user");
+		msg.put("content", content);
+		return msg;
+	}
+
+	private Map<String, Object> assistantMessage(String content) {
+		Map<String, Object> msg = new LinkedHashMap<String, Object>();
+		msg.put("role", "assistant");
+		msg.put("content", content);
+		return msg;
+	}
+
+	private Map<String, Object> toolMessage(String callId, String content) {
+		Map<String, Object> msg = new LinkedHashMap<String, Object>();
+		msg.put("role", "tool");
+		msg.put("tool_call_id", callId);
+		msg.put("content", content);
+		return msg;
+	}
+
+	/**
+	 * Resolve the API key. Priority: explicit override &rarr; {@code -Dopenrouter.api.key}
+	 * &rarr; {@code OPENROUTER_API_KEY} env var.
+	 */
+	private String resolveApiKey(String override) {
+		if (override != null && !override.isEmpty()) {
+			return override;
 		}
 		String key = System.getProperty("openrouter.api.key", "");
 		if (key.isEmpty()) {
@@ -347,22 +416,21 @@ public class OpenRouterAgent {
 	}
 
 	/**
-	 * Resolve the API base URL. Priority: programmatic override (set by ChatService)
-	 * &rarr; {@code -Dopenrouter.base.url} system property &rarr; built-in default.
-	 * Mirrors the embeddings client and ChatConfig so the REST endpoint honours the
-	 * same base URL as the Swing chatbot. A trailing slash is tolerated.
+	 * Resolve the API base URL. Priority: explicit override (e.g. the Swing chatbot's
+	 * saved setting) &rarr; {@code -Dopenrouter.base.url} system property &rarr; built-in
+	 * default. Mirrors the embeddings client and ChatConfig. A trailing slash is tolerated.
 	 */
-	private String resolveBaseUrl() {
-		String base = (baseUrlOverride != null && !baseUrlOverride.isEmpty())
-			? baseUrlOverride
+	private String resolveBaseUrl(String override) {
+		String base = (override != null && !override.isEmpty())
+			? override
 			: System.getProperty("openrouter.base.url", DEFAULT_BASE_URL);
 		return base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
 	}
 
-	private String post(String apiKey, String jsonBody) {
+	private String post(String apiKey, String baseUrl, String jsonBody) {
 		HttpURLConnection conn = null;
 		try {
-			URL url = new URL(resolveBaseUrl() + "/chat/completions");
+			URL url = new URL(baseUrl + "/chat/completions");
 			conn = (HttpURLConnection) url.openConnection();
 			conn.setRequestMethod("POST");
 			conn.setRequestProperty("Content-Type", "application/json");
@@ -379,9 +447,15 @@ public class OpenRouterAgent {
 			os.close();
 
 			int status = conn.getResponseCode();
-			BufferedReader reader = new BufferedReader(new InputStreamReader(
-				status >= 200 && status < 300 ? conn.getInputStream() : conn.getErrorStream(),
-				"UTF-8"));
+			java.io.InputStream stream = (status >= 200 && status < 300)
+				? conn.getInputStream() : conn.getErrorStream();
+			if (stream == null) {
+				// No response body (e.g. some 4xx / proxy failures) — getErrorStream()
+				// returns null here; avoid the NPE that would escape the IOException catch.
+				LOG.error("OpenRouter returned HTTP {} with no body", status);
+				return null;
+			}
+			BufferedReader reader = new BufferedReader(new InputStreamReader(stream, "UTF-8"));
 			StringBuilder sb = new StringBuilder();
 			String line;
 			while ((line = reader.readLine()) != null) sb.append(line);

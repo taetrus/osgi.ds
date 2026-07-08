@@ -121,6 +121,15 @@ public class InputPanel extends JPanel {
 		// blocks all keystrokes and feels like lag.
 	}
 
+	/**
+	 * Enable or disable the Clear button. Disabled while a send is in flight so the
+	 * conversation history can't be cleared mid-request (which would race the worker
+	 * iterating that same history list).
+	 */
+	public void setClearEnabled(boolean enabled) {
+		clearButton.setEnabled(enabled);
+	}
+
 	/** Request focus on the text area. */
 	public void focusInput() {
 		textArea.requestFocusInWindow();

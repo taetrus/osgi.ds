@@ -67,11 +67,15 @@ public final class ChatConfig {
 				}
 			}
 		} else {
-			LOG.info("No config file found at {}, creating with defaults",
+			LOG.info("No config file found at {}, creating with empty (fall-through) values",
 				configFile.getAbsolutePath());
+			// Write the keys empty, not with the code defaults: an empty value falls
+			// through to the -D system property (then the default), so a persisted
+			// default never shadows -Dopenrouter.model / -Dopenrouter.base.url on the
+			// next launch. Only a value the user explicitly sets here takes precedence.
 			props.setProperty(KEY_API_KEY, "");
-			props.setProperty(KEY_MODEL, DEFAULT_MODEL);
-			props.setProperty(KEY_BASE_URL, DEFAULT_BASE_URL);
+			props.setProperty(KEY_MODEL, "");
+			props.setProperty(KEY_BASE_URL, "");
 			save();
 		}
 	}

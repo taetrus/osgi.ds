@@ -39,6 +39,9 @@ public class GreetServlet extends HttpServlet {
 	private static final long serialVersionUID = 1L;
 	private static final Logger LOG = LoggerFactory.getLogger(GreetServlet.class);
 
+	/** Cap the echo body so a huge POST cannot exhaust heap on the shared Jetty. */
+	private static final int MAX_BODY_BYTES = 64 * 1024;
+
 	private IGreet greetService;
 
 	@Activate
@@ -56,21 +59,25 @@ public class GreetServlet extends HttpServlet {
 	protected void doGet(HttpServletRequest req, HttpServletResponse resp)
 			throws ServletException, IOException {
 
-		String pathInfo = req.getPathInfo();
-		String name = null;
+		try {
+			String pathInfo = req.getPathInfo();
+			String name = null;
 
-		if (pathInfo != null && pathInfo.length() > 1) {
-			name = pathInfo.substring(1); // Remove leading slash
+			if (pathInfo != null && pathInfo.length() > 1) {
+				name = pathInfo.substring(1); // Remove leading slash
+			}
+
+			LOG.info("GET /api/greet{} called", name != null ? "/" + name : "");
+			greetService.greet();
+
+			String message = name != null
+				? "Hello, " + name + "!"
+				: "Hello from OSGi HTTP Whiteboard!";
+
+			sendJsonResponse(resp, message);
+		} catch (RuntimeException e) {
+			sendJsonError(resp, e);
 		}
-
-		LOG.info("GET /api/greet{} called", name != null ? "/" + name : "");
-		greetService.greet();
-
-		String message = name != null
-			? "Hello, " + name + "!"
-			: "Hello from OSGi HTTP Whiteboard!";
-
-		sendJsonResponse(resp, message);
 	}
 
 	@Override
@@ -78,19 +85,30 @@ public class GreetServlet extends HttpServlet {
 			throws ServletException, IOException {
 
 		LOG.info("POST /api/greet called");
-		greetService.greet();
 
-		// Read request body
+		// Read the request body with a hard size cap. A char-buffer read (not readLine)
+		// preserves the body's internal line breaks in the echo.
 		StringBuilder sb = new StringBuilder();
-		String line;
-		while ((line = req.getReader().readLine()) != null) {
-			sb.append(line);
+		char[] buf = new char[4096];
+		int total = 0;
+		int n;
+		while ((n = req.getReader().read(buf)) != -1) {
+			total += n;
+			if (total > MAX_BODY_BYTES) {
+				resp.sendError(HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE, "Request too large");
+				return;
+			}
+			sb.append(buf, 0, n);
 		}
 
-		String body = sb.toString();
-		String message = "Echo: " + (body.isEmpty() ? "empty" : body);
-
-		sendJsonResponse(resp, message);
+		try {
+			greetService.greet();
+			String body = sb.toString();
+			String message = "Echo: " + (body.isEmpty() ? "empty" : body);
+			sendJsonResponse(resp, message);
+		} catch (RuntimeException e) {
+			sendJsonError(resp, e);
+		}
 	}
 
 	private void sendJsonResponse(HttpServletResponse resp, String message) throws IOException {
@@ -114,13 +132,41 @@ public class GreetServlet extends HttpServlet {
 		);
 	}
 
+	/** Emit a JSON error payload with a 500 status, honouring the JSON contract. */
+	private void sendJsonError(HttpServletResponse resp, Exception e) throws IOException {
+		LOG.error("Request handling failed", e);
+		if (resp.isCommitted()) {
+			return;
+		}
+		resp.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+		resp.setContentType("application/json");
+		resp.setCharacterEncoding("UTF-8");
+		PrintWriter writer = resp.getWriter();
+		writer.print("{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+		writer.flush();
+	}
+
 	private String escapeJson(String value) {
 		if (value == null) return "";
-		return value
-			.replace("\\", "\\\\")
-			.replace("\"", "\\\"")
-			.replace("\n", "\\n")
-			.replace("\r", "\\r")
-			.replace("\t", "\\t");
+		StringBuilder sb = new StringBuilder(value.length() + 8);
+		for (int i = 0; i < value.length(); i++) {
+			char c = value.charAt(i);
+			switch (c) {
+				case '"':  sb.append("\\\""); break;
+				case '\\': sb.append("\\\\"); break;
+				case '\n': sb.append("\\n");  break;
+				case '\r': sb.append("\\r");  break;
+				case '\t': sb.append("\\t");  break;
+				case '\b': sb.append("\\b");  break;
+				case '\f': sb.append("\\f");  break;
+				default:
+					if (c < 0x20) {
+						sb.append(String.format("\\u%04x", (int) c));
+					} else {
+						sb.append(c);
+					}
+			}
+		}
+		return sb.toString();
 	}
 }

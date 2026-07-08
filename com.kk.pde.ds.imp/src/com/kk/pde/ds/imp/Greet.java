@@ -10,7 +10,7 @@ import com.kk.pde.ds.api.IGreet;
 @Component
 public class Greet implements IGreet {
 
-	private static Logger log = LoggerFactory.getLogger(Greet.class);
+	private static final Logger log = LoggerFactory.getLogger(Greet.class);
 
 	@Activate
 	public void start() {
@@ -19,7 +19,15 @@ public class Greet implements IGreet {
 
 	@Override
 	public void greet() {
-		log.info("Hello world!");
+		log.info(greeting());
+	}
+
+	/**
+	 * The greeting text. Extracted as a testable seam so tests can assert on the
+	 * message without capturing log output.
+	 */
+	public String greeting() {
+		return "Hello world!";
 	}
 
 }

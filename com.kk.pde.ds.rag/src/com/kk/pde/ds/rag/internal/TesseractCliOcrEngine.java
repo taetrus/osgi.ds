@@ -146,23 +146,51 @@ public class TesseractCliOcrEngine implements OcrEngine {
 		errDrain.setDaemon(true);
 		errDrain.start();
 
-		byte[] stdout;
+		// Drain stdout on its OWN thread too, so the main thread can enforce the
+		// timeout via waitFor() first. Reading stdout inline would block until the
+		// pipe reaches EOF — a wedged tesseract that keeps stdout open would then
+		// hang this thread forever and the timeout would never fire.
+		final byte[][] stdoutHolder = new byte[1][];
+		final IOException[] stdoutError = new IOException[1];
+		final Thread outDrain = new Thread(new Runnable() {
+			@Override
+			public void run() {
+				try {
+					stdoutHolder[0] = drain(proc.getInputStream());
+				} catch (IOException e) {
+					stdoutError[0] = e;
+				}
+			}
+		}, "rag-ocr-stdout");
+		outDrain.setDaemon(true);
+		outDrain.start();
+
 		try {
-			stdout = drain(proc.getInputStream());
 			boolean done = proc.waitFor(timeoutSeconds, TimeUnit.SECONDS);
 			if (!done) {
-				proc.destroyForcibly();
 				throw new IOException("tesseract timed out after " + timeoutSeconds + "s");
 			}
+			// Process has exited; let the drain thread finish reading buffered stdout.
+			outDrain.join(TimeUnit.SECONDS.toMillis(5));
 		} catch (InterruptedException e) {
-			proc.destroyForcibly();
 			Thread.currentThread().interrupt();
 			throw new IOException("OCR interrupted", e);
+		} finally {
+			// Always reap the process — covers timeout, interruption, and a drain
+			// thread that threw before EOF.
+			if (proc.isAlive()) {
+				proc.destroyForcibly();
+			}
+		}
+
+		if (stdoutError[0] != null) {
+			throw stdoutError[0];
 		}
 		int exit = proc.exitValue();
 		if (exit != 0) {
 			throw new IOException("tesseract exited " + exit);
 		}
+		byte[] stdout = stdoutHolder[0] != null ? stdoutHolder[0] : new byte[0];
 		return new String(stdout, StandardCharsets.UTF_8);
 	}
 

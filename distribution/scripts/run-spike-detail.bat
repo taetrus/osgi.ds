@@ -28,4 +28,4 @@ if not defined OSGI_JAR (
 
 echo Starting spike DETAIL (App-2): %OSGI_JAR%
 cd /d "!PRODUCT_DIR!"
-java -jar "%OSGI_JAR%" -configuration configuration -console -consoleLog %*
+java %* -jar "%OSGI_JAR%" -configuration configuration -console -consoleLog

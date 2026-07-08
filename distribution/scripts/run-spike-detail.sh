@@ -39,4 +39,4 @@ fi
 
 echo "Starting spike DETAIL (App-2): $OSGI_JAR"
 cd "$PRODUCT_DIR"
-java -jar "$OSGI_JAR" -configuration configuration -console -consoleLog "$@"
+java "$@" -jar "$OSGI_JAR" -configuration configuration -console -consoleLog

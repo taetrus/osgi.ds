@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is an OSGi Declarative Services (DS) project built with Maven Tycho 4.0.13. It demonstrates service-oriented architecture with clear separation between API contracts, implementations, and consumers. The build produces a p2 repository and platform-specific product archives.
 
+> **Security:** The HTTP surface (port 8080) is intentionally unauthenticated and is meant for **localhost only**. See [`SECURITY.md`](SECURITY.md) for the known exposures (`/mcp`, `/llm/chat`, `ingest_documents`, `http_fetch`) and the checklist to complete before exposing any of it beyond localhost.
+
 ## Additional Instructions
 
 For every project, write a detailed FOR[kerem].md file that explains the whole project in plain language.
@@ -116,9 +118,17 @@ com.kk.pde.ds.rag      → Document Q&A (RAG): parse/chunk/embed/store + search-
 com.kk.pde.ds.ecf.api      → IRemoteGreet contract (ECF remote service interface)
 com.kk.pde.ds.ecf.host     → RemoteGreetImpl exported as a remote service (ECF RSA)
 com.kk.pde.ds.ecf.consumer → Imports IRemoteGreet via EDEF, @Reference injection
+com.kk.pde.ds.spike.api    → Spike/experiment contract bundle
+com.kk.pde.ds.spike.master → Spike master component
+com.kk.pde.ds.spike.detail → Spike detail component
 com.kk.pde.ds.feature  → Feature grouping all bundles
 distribution           → p2 repository + product builds
+fatjar                 → Standalone fat-JAR launcher (built separately, not in the reactor)
 ```
+
+Test fragments (`eclipse-test-plugin`, run by tycho-surefire inside a live OSGi
+framework): `com.kk.pde.ds.imp.tests` (Greet) and `com.kk.pde.ds.mcp.api.tests` (the
+shared `Json` parser).
 
 ## REST API
 
@@ -307,7 +317,7 @@ consumer's `osgi>` prompt, `ecf:greet World` re-invokes on demand.
 
 | File | Purpose |
 |------|---------|
-| `com.kk.pde.ds.target/*.target` | Target platform with p2 repository URLs |
+| `com.kk.pde.ds.target/*.target` | Target platform — Maven-location dependencies (no p2 repo URLs), incl. JUnit 5 + Equinox test harness |
 | `distribution/p2.product` | Product definition (bundles, start levels) |
 | `distribution/category.xml` | p2 repository category structure |
 | `*/META-INF/MANIFEST.MF` | OSGi bundle metadata |

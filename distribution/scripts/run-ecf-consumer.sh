@@ -36,4 +36,4 @@ fi
 
 echo "Starting ECF CONSUMER: $OSGI_JAR"
 cd "$PRODUCT_DIR"
-java -jar "$OSGI_JAR" -configuration configuration -console -consoleLog "$@"
+java "$@" -jar "$OSGI_JAR" -configuration configuration -console -consoleLog

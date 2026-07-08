@@ -15,6 +15,21 @@ public interface VectorStore {
 	void add(Chunk chunk, float[] embedding);
 
 	/**
+	 * Add several chunks and their embeddings as one batch. {@code chunks} and
+	 * {@code embeddings} must be the same length and are paired by index. Adding a
+	 * document's chunks in a single call keeps the store consistent (no half-ingested
+	 * document is ever visible) and avoids the per-element copies a naive store pays.
+	 */
+	void addAll(List<Chunk> chunks, List<float[]> embeddings);
+
+	/**
+	 * Remove every chunk previously stored for the given source document.
+	 * Called before re-ingesting a document so a second ingest replaces rather than
+	 * duplicates its chunks. Returns the number of chunks removed.
+	 */
+	int removeBySource(String source);
+
+	/**
 	 * Return the {@code topK} chunks most similar to the query embedding,
 	 * highest score first.
 	 */

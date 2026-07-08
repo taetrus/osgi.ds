@@ -264,6 +264,9 @@ public class ChatFrame extends JFrame {
 	private void sendMessageAsync(final String message) {
 		chatPanel.addUserMessage(message);
 		inputPanel.setSendEnabled(false);
+		// Disable Clear too: clearHistory() must not run while the worker below is
+		// iterating/appending the same history list.
+		inputPanel.setClearEnabled(false);
 		chatPanel.addSystemMessage("Thinking...");
 
 		new SwingWorker<String, Void>() {
@@ -282,6 +285,7 @@ public class ChatFrame extends JFrame {
 					chatPanel.addSystemMessage("Error: " + e.getMessage());
 				} finally {
 					inputPanel.setSendEnabled(true);
+					inputPanel.setClearEnabled(true);
 					inputPanel.focusInput();
 				}
 			}

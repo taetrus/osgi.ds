@@ -111,14 +111,14 @@ public class DocumentIngestionServiceImpl implements DocumentIngestionService {
 
 		for (Path file : files) {
 			try {
-				int added = ingestFile(file);
+				int added = ingestFile(file, root);
 				ingested++;
 				chunksAdded += added;
-				detail.append("  + ").append(file.getFileName()).append(" -> ")
+				detail.append("  + ").append(sourceOf(file, root)).append(" -> ")
 					.append(added).append(" chunk(s)\n");
 			} catch (Exception e) {
 				failed++;
-				detail.append("  ! ").append(file.getFileName()).append(" -> ")
+				detail.append("  ! ").append(sourceOf(file, root)).append(" -> ")
 					.append(e.getMessage()).append('\n');
 				LOG.warn("Failed to ingest {}", file, e);
 			}
@@ -127,13 +127,20 @@ public class DocumentIngestionServiceImpl implements DocumentIngestionService {
 		return new IngestResult(ingested, failed, chunksAdded, detail.toString().trim());
 	}
 
-	/** Parse, chunk, embed and store one file. Returns number of chunks added. */
-	private int ingestFile(Path file) throws IOException {
+	/**
+	 * Parse, chunk, embed and store one file. Returns the number of chunks added.
+	 *
+	 * <p>Embeddings are gathered and fully verified <em>before</em> anything is written
+	 * to the store, and any previously-stored chunks for this source are removed first.
+	 * So a partial-embedding failure leaves the store untouched (no orphaned chunks), and
+	 * re-ingesting the same document replaces its chunks rather than duplicating them.</p>
+	 */
+	private int ingestFile(Path file, Path root) throws IOException {
 		String text = parser.extractText(file);
 		if (text == null || text.trim().isEmpty()) {
 			return 0;
 		}
-		String source = file.getFileName().toString();
+		String source = sourceOf(file, root);
 		List<Chunk> chunks = chunker.chunk(text, source);
 		if (chunks.isEmpty()) {
 			return 0;
@@ -145,19 +152,44 @@ public class DocumentIngestionServiceImpl implements DocumentIngestionService {
 		}
 		List<float[]> vectors = embeddingClient.embedPassages(texts);
 
-		int added = 0;
+		// Verify every chunk embedded before touching the store — fail atomically otherwise.
 		for (int i = 0; i < chunks.size(); i++) {
-			float[] vec = (i < vectors.size()) ? vectors.get(i) : null;
-			if (vec != null) {
-				vectorStore.add(chunks.get(i), vec);
-				added++;
+			if (i >= vectors.size() || vectors.get(i) == null) {
+				throw new IOException("embedded " + countNonNull(vectors) + "/" + chunks.size()
+					+ " chunks (embedding backend unavailable?)");
 			}
 		}
-		if (added < chunks.size()) {
-			throw new IOException("embedded " + added + "/" + chunks.size()
-				+ " chunks (embedding backend unavailable?)");
+
+		// Replace any prior version of this document, then add the fresh chunks atomically.
+		vectorStore.removeBySource(source);
+		vectorStore.addAll(chunks, vectors);
+		return chunks.size();
+	}
+
+	private static int countNonNull(List<float[]> vectors) {
+		int n = 0;
+		for (float[] v : vectors) {
+			if (v != null) {
+				n++;
+			}
 		}
-		return added;
+		return n;
+	}
+
+	/**
+	 * The source label for a file: its path relative to the ingest root (forward-slashed),
+	 * so two same-named files in different sub-folders get distinct ids and citations.
+	 * Falls back to the file name when the root is a single file.
+	 */
+	private static String sourceOf(Path file, Path root) {
+		try {
+			if (Files.isDirectory(root)) {
+				return root.relativize(file).toString().replace('\\', '/');
+			}
+		} catch (IllegalArgumentException ignored) {
+			// file not under root (shouldn't happen) — fall back to the file name
+		}
+		return file.getFileName().toString();
 	}
 
 	@Override

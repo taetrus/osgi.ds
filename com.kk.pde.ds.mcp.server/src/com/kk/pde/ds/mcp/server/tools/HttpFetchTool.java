@@ -62,9 +62,13 @@ public class HttpFetchTool implements IMcpTool {
 			conn.setRequestProperty("User-Agent", "OSGi-MCP-HttpFetch/1.0");
 
 			int status = conn.getResponseCode();
-			BufferedReader reader = new BufferedReader(new InputStreamReader(
-				status >= 200 && status < 300 ? conn.getInputStream() : conn.getErrorStream(),
-				"UTF-8"));
+			java.io.InputStream stream = (status >= 200 && status < 300)
+				? conn.getInputStream() : conn.getErrorStream();
+			if (stream == null) {
+				// Error response with no body — getErrorStream() is null here; avoid NPE.
+				return "HTTP " + status + " (no body)";
+			}
+			BufferedReader reader = new BufferedReader(new InputStreamReader(stream, "UTF-8"));
 
 			StringBuilder sb = new StringBuilder();
 			char[] buf = new char[1024];

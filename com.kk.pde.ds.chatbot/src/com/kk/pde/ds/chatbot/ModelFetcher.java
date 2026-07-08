@@ -12,7 +12,7 @@ import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.kk.pde.ds.mcp.llm.LlmJsonUtil;
+import com.kk.pde.ds.mcp.api.Json;
 
 /**
  * Queries OpenAI-compatible /v1/models endpoint to list available models.
@@ -64,23 +64,22 @@ public final class ModelFetcher {
 			reader.close();
 
 			String json = sb.toString();
-			String dataArray = LlmJsonUtil.getObject(json, "data");
-			if (dataArray == null) {
+			List<Object> data = Json.asList(Json.get(Json.parseObject(json), "data"));
+			if (data == null) {
 				LOG.warn("No 'data' array in models response");
 				return Collections.emptyList();
 			}
 
-			List<String> allElements = LlmJsonUtil.getAllInArray(dataArray);
 			List<String> modelIds = new ArrayList<String>();
-			for (String element : allElements) {
-				String id = LlmJsonUtil.getString(element, "id");
+			for (Object element : data) {
+				String id = Json.getString(element, "id");
 				if (id == null || id.isEmpty()) {
 					continue;
 				}
 				// Filter: only include models that support tool calls.
 				// If supported_parameters is absent (e.g. LM Studio), include the model.
-				String params = LlmJsonUtil.getObject(element, "supported_parameters");
-				if (params != null && !params.contains("\"tools\"")) {
+				List<Object> params = Json.asList(Json.get(element, "supported_parameters"));
+				if (params != null && !params.contains("tools")) {
 					continue;
 				}
 				modelIds.add(id);
@@ -88,7 +87,7 @@ public final class ModelFetcher {
 
 			Collections.sort(modelIds);
 			LOG.info("Fetched {} tool-capable models from {} (total: {})",
-				modelIds.size(), modelsUrl, allElements.size());
+				modelIds.size(), modelsUrl, data.size());
 			return modelIds;
 
 		} catch (IOException e) {

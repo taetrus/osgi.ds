@@ -18,6 +18,7 @@ import javax.swing.Timer;
 
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.Deactivate;
 import org.osgi.service.component.annotations.Reference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,11 +31,15 @@ import com.kk.pde.ds.chatbot.DarkTheme;
 @Component
 public class App {
 
-    private static Logger log = LoggerFactory.getLogger(App.class);
+    private static final Logger log = LoggerFactory.getLogger(App.class);
 
     private IGreet greet;
-    private String mcpJson;
     private ChatService chatService;
+
+    // Held so @Deactivate can dispose them; set/read across the EDT and the SCR
+    // deactivation thread, hence volatile.
+    private volatile ClockFrame clockFrame;
+    private volatile ChatFrame chatFrame;
 
     @Reference
     public void setChatService(ChatService chatService) {
@@ -56,17 +61,37 @@ public class App {
     public void start() {
         log.info("App.start()");
 
-        mcpJson = McpSettings.load(log);
-
         greet.greet();
 
         // Launch the UI — apply dark theme BEFORE creating any components
         SwingUtilities.invokeLater(() -> {
             DarkTheme.apply();
-            ClockFrame frame = new ClockFrame();
-            frame.setVisible(true);
-            ChatFrame chatFrame = new ChatFrame(chatService);
+            clockFrame = new ClockFrame();
+            clockFrame.setVisible(true);
+            chatFrame = new ChatFrame(chatService);
             chatFrame.setVisible(true);
+        });
+    }
+
+    /**
+     * Dispose the UI when the component/bundle stops. Without this, stopping the app
+     * bundle leaves both windows open with the clock's 1s Timer still firing, and a
+     * restart would spawn duplicate windows. Disposal runs on the EDT.
+     */
+    @Deactivate
+    public void stop() {
+        log.info("App.stop()");
+        final ClockFrame clock = clockFrame;
+        final ChatFrame chat = chatFrame;
+        clockFrame = null;
+        chatFrame = null;
+        SwingUtilities.invokeLater(() -> {
+            if (clock != null) {
+                clock.dispose();
+            }
+            if (chat != null) {
+                chat.dispose();
+            }
         });
     }
 
@@ -95,6 +120,13 @@ public class App {
                 }
             });
             timer.start();
+        }
+
+        /** Stop the repaint timer so it doesn't keep firing after the window is gone. */
+        void stopTimer() {
+            if (timer != null) {
+                timer.stop();
+            }
         }
 
         @Override
@@ -168,16 +200,26 @@ public class App {
      * Clock Frame
      */
     static class ClockFrame extends JFrame {
+        private final ClockPanel clockPanel;
+
         public ClockFrame() {
             setTitle("🕐 OSGi Clock");
             setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
             setResizable(false);
-            
-            ClockPanel clockPanel = new ClockPanel();
+
+            clockPanel = new ClockPanel();
             add(clockPanel);
-            
+
             pack();
             setLocationRelativeTo(null);
+        }
+
+        @Override
+        public void dispose() {
+            // Stop the timer whether the window is closed by the user or disposed
+            // programmatically on bundle stop.
+            clockPanel.stopTimer();
+            super.dispose();
         }
     }
 }

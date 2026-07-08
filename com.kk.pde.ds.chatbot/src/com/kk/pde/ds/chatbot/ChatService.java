@@ -10,7 +10,7 @@ import org.osgi.service.component.annotations.Reference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.kk.pde.ds.mcp.llm.LlmJsonUtil;
+import com.kk.pde.ds.mcp.api.Json;
 import com.kk.pde.ds.mcp.llm.OpenRouterAgent;
 
 /**
@@ -60,14 +60,14 @@ public class ChatService {
 		}
 
 		history.add("{\"role\":\"user\",\"content\":\""
-			+ LlmJsonUtil.escape(userMessage) + "\"}");
+			+ Json.escape(userMessage) + "\"}");
 
 		LOG.info("Sending chat message (history size={}): {}",
 			history.size(), userMessage);
 
-		agent.setApiKey(getApiKey());
-		agent.setBaseUrl(getBaseUrl());
-		String response = agent.chatWithHistory(history, getModel());
+		// Pass credentials per call rather than mutating the shared agent singleton,
+		// so a Settings change here never leaks into the /llm/chat servlet's requests.
+		String response = agent.chatWithHistory(history, getModel(), getApiKey(), getBaseUrl());
 
 		LOG.info("Chat response: {}", response);
 		return response;
