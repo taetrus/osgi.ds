@@ -203,7 +203,8 @@ so **no existing module changed**.
 | `DocumentIngestionService` | orchestrates parse → chunk → embed → store, and answers `search` |
 | `DocumentSearchTool` / `IngestDocumentsTool` | the two `IMcpTool`s the LLM can call |
 
-**Supported formats:** `.pdf`, `.docx`, `.pptx`, `.html`/`.htm`, `.txt`/`.md`.
+**Supported formats:** `.pdf`, `.docx`, `.pptx`, `.html`/`.htm`, `.txt`/`.md`, and — when
+OCR is available — standalone image files (`.png`/`.jpg`/`.jpeg`/`.tif`/`.tiff`/`.bmp`/`.gif`).
 
 **Configuration (system properties / env vars):**
 

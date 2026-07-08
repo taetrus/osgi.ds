@@ -23,7 +23,9 @@ piece (notably `VectorStore` → pgvector) can be swapped without touching calle
 ## Supported formats
 
 `.pdf` (Apache PDFBox 2.0.x) · `.docx` / `.pptx` (read directly from the OOXML zip —
-no Apache POI, no extra dependencies) · `.html` / `.htm` · `.txt` / `.md`.
+no Apache POI, no extra dependencies) · `.html` / `.htm` · `.txt` / `.md` · standalone
+image files `.png` / `.jpg` / `.jpeg` / `.tif` / `.tiff` / `.bmp` / `.gif` (OCR'd whole;
+skipped with a warning when OCR is unavailable).
 
 ## Configuration (system properties / env vars)
 

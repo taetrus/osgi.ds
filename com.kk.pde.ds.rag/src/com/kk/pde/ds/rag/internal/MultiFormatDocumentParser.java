@@ -49,6 +49,8 @@ import com.kk.pde.ds.rag.api.OcrEngine;
  *       heavyweight office library (and avoids POI's large dependency tree).</li>
  *   <li><b>.html / .htm</b> — strip tags and decode entities.</li>
  *   <li><b>.txt / .md</b> — read as UTF-8.</li>
+ *   <li><b>image files</b> (.png/.jpg/.jpeg/.tif/.tiff/.bmp/.gif) — OCR the file
+ *       directly (empty result when OCR is unavailable).</li>
  * </ul>
  *
  * <p>PDFBox logs via commons-logging (JCL), not slf4j, so it does not perturb the
@@ -68,7 +70,7 @@ public class MultiFormatDocumentParser implements DocumentParser {
 	private static final Set<String> SUPPORTED_EXTENSIONS = new HashSet<String>(Arrays.asList(
 		"pdf", "docx", "pptx", "txt", "md", "html", "htm"));
 
-	/** Image extensions OCR'd when found embedded in OOXML media folders. */
+	/** Image extensions accepted as standalone documents and OCR'd when embedded in OOXML media folders. */
 	private static final Set<String> IMAGE_EXTENSIONS = new HashSet<String>(Arrays.asList(
 		"png", "jpg", "jpeg", "bmp", "tif", "tiff", "gif"));
 
@@ -97,7 +99,8 @@ public class MultiFormatDocumentParser implements DocumentParser {
 
 	@Override
 	public boolean supports(Path file) {
-		return SUPPORTED_EXTENSIONS.contains(extension(file));
+		String ext = extension(file);
+		return SUPPORTED_EXTENSIONS.contains(ext) || IMAGE_EXTENSIONS.contains(ext);
 	}
 
 	@Override
@@ -116,8 +119,22 @@ public class MultiFormatDocumentParser implements DocumentParser {
 		if ("html".equals(ext) || "htm".equals(ext)) {
 			return htmlToText(readUtf8(file));
 		}
+		if (IMAGE_EXTENSIONS.contains(ext)) {
+			return extractImage(file);
+		}
 		// txt, md, and anything else supported: plain UTF-8.
 		return readUtf8(file);
+	}
+
+	// ---- standalone images -------------------------------------------------
+
+	private String extractImage(Path file) throws IOException {
+		if (ocr == null || !ocr.isAvailable()) {
+			LOG.warn("Image '{}' skipped: OCR is unavailable, so its content cannot be indexed.",
+				file.getFileName());
+			return "";
+		}
+		return ocr.ocr(Files.readAllBytes(file)).trim();
 	}
 
 	// ---- PDF ---------------------------------------------------------------
