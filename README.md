@@ -9,48 +9,58 @@ A complete Java 8 OSGi application demonstrating enterprise-grade architecture w
 1. [Overview](#overview)
 2. [Requirements](#requirements)
 3. [Quick Start](#quick-start)
-4. [Project Structure](#project-structure)
-5. [Build System (Maven Tycho)](#build-system-maven-tycho)
-6. [Target Platform](#target-platform)
-7. [Declarative Services (DS)](#declarative-services-ds)
-8. [HTTP Whiteboard (REST API)](#http-whiteboard-rest-api)
-9. [Felix WebConsole](#felix-webconsole)
-10. [Health Checks](#health-checks)
-11. [MCP Server (Model Context Protocol)](#mcp-server-model-context-protocol)
-12. [LLM Integration (OpenRouter / OpenAI-Compatible)](#llm-integration-openrouter--openai-compatible)
-13. [Chatbot UI](#chatbot-ui)
-14. [File-Based Configuration](#file-based-configuration)
-15. [Settings Loader](#settings-loader)
-16. [Logging](#logging)
-17. [Product Definition](#product-definition)
-18. [Running the Application](#running-the-application)
-19. [Fat JAR (Single Executable)](#fat-jar-single-executable)
-20. [Remote Debugging](#remote-debugging)
-21. [IDE Integration](#ide-integration)
-22. [OSGi Console Commands](#osgi-console-commands)
-23. [Troubleshooting](#troubleshooting)
-24. [File Reference](#file-reference)
+4. [Feature Showcase — Run Guide (macOS & Windows)](#feature-showcase--run-guide-macos--windows)
+5. [Project Structure](#project-structure)
+6. [Build System (Maven Tycho)](#build-system-maven-tycho)
+7. [Target Platform](#target-platform)
+8. [Declarative Services (DS)](#declarative-services-ds)
+9. [HTTP Whiteboard (REST API)](#http-whiteboard-rest-api)
+10. [Felix WebConsole](#felix-webconsole)
+11. [Health Checks](#health-checks)
+12. [MCP Server (Model Context Protocol)](#mcp-server-model-context-protocol)
+13. [LLM Integration (OpenRouter / OpenAI-Compatible)](#llm-integration-openrouter--openai-compatible)
+14. [Chatbot UI](#chatbot-ui)
+15. [ECF Remote Services (OSGi RSA)](#ecf-remote-services-osgi-rsa)
+16. [File-Based Configuration](#file-based-configuration)
+17. [Settings Loader](#settings-loader)
+18. [Logging](#logging)
+19. [Product Definition](#product-definition)
+20. [Running the Application](#running-the-application)
+21. [Fat JAR (Single Executable)](#fat-jar-single-executable)
+22. [Remote Debugging](#remote-debugging)
+23. [IDE Integration](#ide-integration)
+24. [OSGi Console Commands](#osgi-console-commands)
+25. [Troubleshooting](#troubleshooting)
+26. [File Reference](#file-reference)
 
 ---
 
 ## Overview
 
-This workspace contains a fully-functional Java 8 OSGi application built with **Maven Tycho 4.0.13**. It demonstrates:
+This workspace is a **showcase repository**: a fully-functional Java 8 OSGi application built with **Maven Tycho 4.0.13**, where each module demonstrates a production technique end to end. See [Feature Showcase — Run Guide](#feature-showcase--run-guide-macos--windows) for per-feature run instructions on macOS and Windows.
 
 | Feature | Description |
 |---------|-------------|
-| **Declarative Services** | Clean API/implementation/consumer separation with `@Component`, `@Reference`, `@Activate` |
-| **HTTP Whiteboard** | REST-like endpoints via OSGi HTTP Whiteboard servlet pattern |
-| **Felix WebConsole** | Web-based administration with DS plugin |
-| **Health Checks** | Custom and general health checks with WebConsole plugin |
+| **Tycho CI/CD build** | Reproducible Maven Tycho build producing a p2 repository + runnable platform-specific products (Linux/Windows/macOS); GitHub Actions workflow on `main` |
+| **Declarative Services** | The core showcase: clean API/implementation/consumer separation with `@Component`, `@Reference`, `@Activate` (Felix SCR) |
+| **HTTP Whiteboard (REST API)** | REST-like endpoints for OSGi services via the HTTP Whiteboard servlet pattern |
+| **Felix WebConsole** | Web-based administration with DS plugin — live runtime introspection |
+| **Felix Health Checks** | Custom and general health checks with WebConsole plugin |
+| **MCP Server + Client** | Model Context Protocol server (JSON-RPC 2.0 over HTTP) with a pluggable `IMcpTool` service registry — new tools are just DS components — plus an MCP client that exercises it |
+| **LLM Integration** | OpenAI-compatible API bridge (OpenRouter, LM Studio, …) with an agent loop that calls MCP tools |
+| **Chatbot UI** | Swing desktop chat with model selection and conversation history |
+| **RAG (Document Q&A)** | Retrieval-augmented generation: parse → chunk → embed → vector store, exposed to the LLM as a `document_search` tool |
+| **OCR pipeline** | Text-on-pixels recovery: scanned PDFs rasterized via PDFBox and standalone/embedded images OCR'd through the Tesseract CLI (zero new Java dependencies) |
+| **ECF Remote Services (RSA)** | A DS `@Reference` satisfied across two JVMs over `ecftcp://`, with file-based EDEF discovery (no ZooKeeper) |
+| **Spike: multi-frame / multi-JVM UI** | Two JVMs tile one screen as a single combined UI, sharing only a few integers (`DockLayout`) over ECF; draggable anchor window all frames follow |
+| **Fat JAR launcher** | The whole OSGi app as one standalone `java -jar` executable — an alternative packaging next to the p2 product |
+| **In-framework testing** | `eclipse-test-plugin` fragments run by tycho-surefire *inside a live Equinox* — tests implicitly verify manifests and bundle resolution |
+| **Zero-dependency engineering** | A recurring theme: hand-rolled JSON parser, OOXML-as-zip parsing (no POI/Tika), Tesseract via subprocess (no Tess4J) |
+| **Security posture** | [`SECURITY.md`](SECURITY.md) documents the intentionally-unauthenticated localhost HTTP surface and the hardening checklist |
 | **File Install** | Auto-loading configuration files at runtime |
 | **Target Platform** | Tycho target definition with Maven dependencies |
-| **Product Builds** | Platform-specific archives for Linux, Windows, macOS |
 | **Remote Debugging** | JDWP support for attaching debuggers |
 | **Logging** | Logback with configurable levels |
-| **MCP Server** | Model Context Protocol with tool registry and JSON-RPC 2.0 |
-| **LLM Integration** | OpenAI-compatible API bridge with agent loop and tool calls |
-| **Chatbot UI** | Swing desktop chat with model selection and conversation history |
 
 ---
 
@@ -108,6 +118,324 @@ The chatbot window will launch automatically alongside the clock.
 ### Access Services
 - **WebConsole**: http://localhost:8080/system/console (admin/admin)
 - **REST API**: http://localhost:8080/api/greet
+
+---
+
+## Feature Showcase — Run Guide (macOS & Windows)
+
+Every feature below can be run independently. All commands assume you are at the
+**repository root** and have built once with `mvn clean verify`.
+
+> **Windows shell note:** commands are given for **cmd.exe**. In PowerShell, use
+> `curl.exe` instead of `curl` (PowerShell aliases `curl` to `Invoke-WebRequest`), and
+> set environment variables with `$env:NAME = "value"` instead of `set NAME=value`.
+
+### 1. Tycho Build & Runnable Artifacts (CI/CD)
+
+**What it shows:** an Eclipse PDE / OSGi DS project built headlessly by Maven Tycho —
+target-platform resolution from Maven Central, p2 repository generation, and
+platform-specific runnable products. CI runs the same build on every push to `main`
+via GitHub Actions ([.github/workflows/build.yml](.github/workflows/build.yml), Temurin 21).
+
+**macOS / Windows (same command):**
+```bash
+mvn clean verify
+```
+
+Outputs:
+
+| Artifact | Path |
+|----------|------|
+| p2 repository | `distribution/target/repository/` |
+| macOS product | `distribution/target/products/com.kk.pde.ds.product-macosx.cocoa.x86_64.tar.gz` |
+| Windows product | `distribution/target/products/com.kk.pde.ds.product-win32.win32.x86_64.zip` |
+| Linux product | `distribution/target/products/com.kk.pde.ds.product-linux.gtk.x86_64.tar.gz` |
+
+The archives are self-contained: unpack on the target machine, then run the launcher
+script inside (or `java -jar plugins/org.eclipse.osgi_*.jar -configuration configuration -console -consoleLog`).
+
+### 2. Core OSGi Declarative Services (the greet demo)
+
+**What it shows:** the foundation everything else builds on — `IGreet` (API bundle) →
+`Greet` (impl bundle) → `App` (consumer bundle with `@Reference` injection by Felix SCR).
+
+```bash
+# macOS
+./distribution/scripts/run.sh
+
+# Windows
+distribution\scripts\run.bat
+```
+
+Watch the console: `App` activates, SCR injects `Greet`, and "Hello world!" prints.
+Then open http://localhost:8080/system/console/components (admin/admin) to see every
+DS component and its satisfied/unsatisfied references live.
+
+### 3. REST API (HTTP Whiteboard)
+
+**What it shows:** exposing an OSGi service over HTTP with the Whiteboard pattern —
+the servlet is itself a DS component; no `web.xml`, no servlet container config.
+
+Start the product (feature 2), then:
+
+```bash
+# macOS (Terminal)
+curl http://localhost:8080/api/greet
+curl http://localhost:8080/api/greet/World
+curl -X POST http://localhost:8080/api/greet -d '{"message":"Test"}'
+
+# Windows (cmd.exe — note the escaped quotes on POST)
+curl http://localhost:8080/api/greet
+curl http://localhost:8080/api/greet/World
+curl -X POST http://localhost:8080/api/greet -d "{\"message\":\"Test\"}"
+```
+
+### 4. Felix WebConsole
+
+**What it shows:** live administration of a running OSGi framework — bundles,
+services, DS components, configuration.
+
+Start the product, then open **http://localhost:8080/system/console** in any browser
+(both OSes; credentials `admin`/`admin`). The **Components** tab is the one to study:
+it shows each `@Component`'s state and which `@Reference`s are bound.
+
+### 5. Felix Health Checks
+
+**What it shows:** custom (`GreetHealthCheck`) and general-purpose health checks with
+the WebConsole plugin.
+
+Start the product, then open **http://localhost:8080/system/console/healthcheck**
+(both OSes). Execute checks by tag or name and watch OK/WARN/CRITICAL results.
+Configuration files under the runtime `load/` directory (File Install) tune the
+general checks — see [Health Checks](#health-checks).
+
+### 6. MCP Server + Client (Model Context Protocol)
+
+**What it shows:** an MCP tool server implemented as OSGi DS components — the
+`IMcpTool` registry means adding a tool is just adding a `@Component` — speaking
+JSON-RPC 2.0 over HTTP at `/mcp`. Rare outside Python/Node: this one runs in Equinox.
+
+Start the product, then:
+
+```bash
+# macOS
+curl -s -X POST http://localhost:8080/mcp -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+curl -s -X POST http://localhost:8080/mcp -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo","arguments":{"message":"hi"}}}'
+
+# Windows (cmd.exe)
+curl -s -X POST http://localhost:8080/mcp -H "Content-Type: application/json" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"
+curl -s -X POST http://localhost:8080/mcp -H "Content-Type: application/json" -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{\"message\":\"hi\"}}}"
+```
+
+The `com.kk.pde.ds.mcp.client` bundle exercises the same endpoint from inside the
+framework — watch its output in the OSGi console at startup.
+
+### 7. Chatbot UI + LLM Integration
+
+**What it shows:** a Swing chat client backed by any OpenAI-compatible API, with an
+agent loop that lets the model call the registered MCP tools mid-conversation.
+
+```bash
+# macOS
+export OPENROUTER_API_KEY=your_key_here
+./distribution/scripts/run.sh
+
+# Windows (cmd.exe)
+set OPENROUTER_API_KEY=your_key_here
+distribution\scripts\run.bat
+
+# Windows (PowerShell)
+$env:OPENROUTER_API_KEY = "your_key_here"
+distribution\scripts\run.bat
+```
+
+The chatbot window opens automatically. Pick a model from the dropdown (it queries
+`/v1/models`), then ask something that needs a tool — e.g. *"what bundles are
+running?"* — and watch the model call `bundle_list`. To use a local LM Studio
+instead of OpenRouter, add `-Dopenrouter.base.url=http://localhost:1234/v1` to the
+script invocation (works on both OSes; `-D` flags are forwarded to the JVM).
+
+There is also a headless HTTP endpoint:
+
+```bash
+# macOS
+curl -s -X POST http://localhost:8080/llm/chat -H 'Content-Type: application/json' \
+  -d '{"message":"hello"}'
+
+# Windows (cmd.exe)
+curl -s -X POST http://localhost:8080/llm/chat -H "Content-Type: application/json" -d "{\"message\":\"hello\"}"
+```
+
+### 8. RAG — Document Q&A
+
+**What it shows:** retrieval-augmented generation as OSGi services — parse (PDFBox /
+OOXML-as-zip) → chunk (sliding window) → embed (`/v1/embeddings`) → in-memory vector
+store — exposed to the LLM as `document_search` / `ingest_documents` MCP tools, so the
+model decides when to retrieve.
+
+```bash
+# macOS — auto-ingest a folder at startup
+export OPENROUTER_API_KEY=your_key_here
+./distribution/scripts/run.sh -Drag.docs.dir=/path/to/your/documents
+
+# Windows (cmd.exe)
+set OPENROUTER_API_KEY=your_key_here
+distribution\scripts\run.bat -Drag.docs.dir=C:\path\to\your\documents
+```
+
+Then ask the chatbot a question about your documents — it calls `document_search`
+itself. Or drive the tools directly over HTTP:
+
+```bash
+# macOS
+curl -s -X POST http://localhost:8080/mcp -H 'Content-Type: application/json' -d \
+ '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ingest_documents","arguments":{"path":"/path/to/docs"}}}'
+curl -s -X POST http://localhost:8080/mcp -H 'Content-Type: application/json' -d \
+ '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"document_search","arguments":{"query":"your question","top_k":"5"}}}'
+
+# Windows (cmd.exe)
+curl -s -X POST http://localhost:8080/mcp -H "Content-Type: application/json" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"ingest_documents\",\"arguments\":{\"path\":\"C:\\\\path\\\\to\\\\docs\"}}}"
+curl -s -X POST http://localhost:8080/mcp -H "Content-Type: application/json" -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"document_search\",\"arguments\":{\"query\":\"your question\",\"top_k\":\"5\"}}}"
+```
+
+Supported formats: `.pdf`, `.docx`, `.pptx`, `.html`/`.htm`, `.txt`/`.md`, and (with
+OCR, below) standalone images. Embeddings default to `intfloat/multilingual-e5-large`;
+see `com.kk.pde.ds.rag/README.md` for every `rag.*` knob.
+
+### 9. OCR — Scanned PDFs & Images
+
+**What it shows:** recovering text that lives in pixels — scanned PDF pages are
+rasterized with PDFBox's `PDFRenderer` and OCR'd; images embedded in PDFs/`.docx` and
+standalone image files (`.png`/`.jpg`/`.jpeg`/`.tif`/`.tiff`/`.bmp`/`.gif`) are OCR'd
+too. The engine shells out to the **Tesseract CLI** — zero new Java/OSGi dependencies.
+
+Install Tesseract once:
+
+```bash
+# macOS
+brew install tesseract
+
+# Windows — either:
+winget install UB-Mannheim.TesseractOCR
+# or: choco install tesseract
+# (ensure tesseract.exe is on PATH, or pass -Drag.ocr.binary=C:\path\to\tesseract.exe)
+```
+
+Then run with RAG (feature 8) — OCR engages automatically when the binary is found.
+Useful flags (both OSes, appended to the run script): `-Drag.ocr.lang=eng+tur`,
+`-Drag.ocr.dpi=300`, `-Drag.ocr.enabled=false` to switch it off. If Tesseract is
+absent, ingestion silently falls back to text-only. For headless servers add
+`-Djava.awt.headless=true`.
+
+### 10. ECF Remote Services (OSGi RSA)
+
+**What it shows:** the same DS `@Reference` pattern stretched across a network — a
+service exported in one JVM is injected into a component in another JVM via Eclipse
+Communication Framework's Generic provider (`ecftcp://localhost:3288`), with
+file-based EDEF discovery (no ZooKeeper/mDNS daemon). Uses two dedicated products.
+
+```bash
+# macOS — terminal 1 (host: exports IRemoteGreet), then terminal 2 (consumer)
+./distribution/scripts/run-ecf-host.sh
+./distribution/scripts/run-ecf-consumer.sh
+
+# Windows — two cmd windows
+distribution\scripts\run-ecf-host.bat
+distribution\scripts\run-ecf-consumer.bat
+```
+
+The consumer logs `Remote response: Hello, ECF! (served remotely by host)`. At the
+consumer's `osgi>` prompt, invoke again on demand: `ecf:greet World` (a custom Gogo
+shell command — another showcase in miniature).
+
+### 11. Spike — Multi-Frame, Multi-JVM Combined UI
+
+**What it shows:** two Swing applications in **separate JVMs** tiling one screen as a
+single apparent UI. They never exchange window positions — the master publishes a
+`DockLayout` (six integers) over ECF (`ecftcp://localhost:3289/catalog`), and both
+sides compute identical geometry from the same formula. One master frame is the
+draggable/minimizable *anchor*; every other frame (in both JVMs) follows it.
+
+```bash
+# macOS — terminal 1 (master FIRST), then terminal 2 (detail)
+./distribution/scripts/run-spike-master.sh
+./distribution/scripts/run-spike-detail.sh
+
+# Windows — two cmd windows (master first)
+distribution\scripts\run-spike-master.bat
+distribution\scripts\run-spike-detail.bat
+```
+
+Click a catalog row in a master frame — the detail JVM shows it on its next poll.
+Drag or minimize the anchor frame and watch every window follow. More frames:
+
+```bash
+# macOS
+SPIKE_FRAMES=3 ./distribution/scripts/run-spike-master.sh
+
+# Windows (cmd.exe)
+set SPIKE_FRAMES=3
+distribution\scripts\run-spike-master.bat
+```
+
+Closing any window shuts down **both** JVMs (the closing flag propagates through the
+shared `DockState`).
+
+### 12. Fat JAR (Single Executable)
+
+**What it shows:** the same OSGi application packaged as one standalone JAR — Equinox
+booted programmatically, bundles loaded from inside the JAR. An alternative delivery
+model next to the p2 product, built outside the Tycho reactor.
+
+```bash
+# Both OSes — build product first, then the fat JAR
+mvn clean verify
+cd fatjar
+mvn clean package
+
+# macOS
+java -jar target/osgi-fatjar.jar
+# (or with LLM features)
+OPENROUTER_API_KEY=your_key java -jar target/osgi-fatjar.jar
+
+# Windows (cmd.exe)
+java -jar target\osgi-fatjar.jar
+rem (or with LLM features)
+set OPENROUTER_API_KEY=your_key
+java -jar target\osgi-fatjar.jar
+```
+
+Same services as the product: WebConsole, REST, MCP, chatbot.
+
+### 13. In-Framework Tests (tycho-surefire)
+
+**What it shows:** `eclipse-test-plugin` **fragments** that tycho-surefire runs inside
+a live Equinox framework — so a manifest typo or unresolvable import fails the test
+run even when the Java compiles. Three fragments, 36 tests: `com.kk.pde.ds.imp.tests`
+(Greet), `com.kk.pde.ds.mcp.api.tests` (the shared zero-dependency `Json` parser —
+including injection-defense cases), and `com.kk.pde.ds.spike.tests` (the `DockLayout`
+grid math, ECF-serialized value objects, catalog service state).
+
+```bash
+# Both OSes — tests run as part of the build
+mvn clean verify
+
+# One fragment only (note: builds the reactor up to it)
+mvn clean verify -pl com.kk.pde.ds.spike.tests -am
+```
+
+Reports land in `<fragment>/target/surefire-reports/`.
+
+### 14. Security Posture
+
+**What it shows:** honest documentation of an intentionally-unauthenticated demo
+surface. The HTTP endpoints on port 8080 (`/mcp`, `/llm/chat`, `ingest_documents`,
+`http_fetch`) are **localhost-only by design**; [`SECURITY.md`](SECURITY.md) catalogs
+each exposure and the checklist to complete before binding anything beyond localhost.
+Read it before deploying this repo anywhere public — no commands to run, just the
+habit worth copying.
 
 ---
 
@@ -1664,16 +1992,15 @@ java -jar ... ...                         # Missing flag entirely
 
 | Metric | Count |
 |--------|-------|
-| Maven Modules | 13 (12 active, 1 test disabled) |
-| Application Bundles | 9 (api, imp, app, rest, mcp.api, mcp.server, mcp.client, mcp.llm, chatbot) |
-| Framework Bundles | 27 |
-| DS Components | 8 |
-| MCP Tools | 3 (echo, greet, system_info) |
+| Maven Modules | 22 in the Tycho reactor (+ `fatjar` built separately) |
+| Application Bundles | 16 (api, imp, app, rest, mcp.api/server/client/llm, chatbot, rag, ecf.api/host/consumer, spike.api/master/detail) |
+| Test Fragments | 3 (imp.tests, mcp.api.tests, spike.tests) — 36 tests inside a live Equinox |
+| DS Components | 31 (`OSGI-INF/*.xml` descriptors) |
+| MCP Tools | 9 (echo, greet, calculator, datetime, bundle_list, system_info, http_fetch + document_search, ingest_documents) |
 | Health Checks | 7 (1 custom + 6 file-based) |
-| Java Source Files | 18 |
-| Configuration Files | 9 (.ini, .xml, .cfg) |
-| Shell Scripts | 2 |
-| Build Environments | 3 (Linux, Windows, macOS) |
+| Java Source Files | 67 |
+| Launcher Scripts | 10 (`run`, `run-ecf-host/consumer`, `run-spike-master/detail` × `.sh`/`.bat`) |
+| Products | 5 (main, ecf.host, ecf.consumer, spike.master, spike.detail) for Linux, Windows, macOS |
 | Start Levels | 5 (0-4) |
 | Target Dependencies | ~50 Maven coordinates |
 
