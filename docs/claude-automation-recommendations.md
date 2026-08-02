@@ -2,21 +2,35 @@
 
 Tailored automation recommendations for the **p.osgi.ds** project (OSGi Declarative Services, Maven Tycho 4.0.13, Java 8, Eclipse 2024-12). This document combines the initial top-pick recommendations with expanded options across all five categories.
 
+> **Profile refreshed 2026-08-02.** The recommendations below were first written 2026-05-29;
+> the codebase has since grown the RAG, ECF and spike bundles. Nothing was *invalidated* by that
+> growth — the arguments got stronger — but re-check this section against `pom.xml` before
+> trusting it. **None of the recommendations have been implemented yet**: there is no `.mcp.json`,
+> no `.claude/skills/`, no `.claude/agents/`, and no `hooks` block in either settings file.
+
 ---
 
 ## Codebase Profile
 
-- **Type**: Java 8, OSGi Declarative Services, multi-bundle
+- **Type**: Java 8, OSGi Declarative Services, multi-bundle — **22 reactor modules** (`pom.xml:107-128`) plus `fatjar`, which is built separately and is *not* in the reactor
 - **Build**: Maven Tycho 4.0.13 on Eclipse 2024-12 target platform
-- **Bundles**: `api`, `imp`, `app`, `rest`, `mcp.api`, `mcp.server`, `mcp.client`, `mcp.llm`, `chatbot`, `feature`, `imp.tests`, `distribution`, `fatjar`
-- **Runtime surfaces**: Felix HTTP Jetty (port 8080), Felix WebConsole, MCP JSON-RPC servlet, OpenRouter LLM bridge, Swing chatbot
+- **Bundles**, by cluster:
+  - core demo — `api`, `imp`, `app`, `rest`
+  - MCP/LLM — `mcp.api`, `mcp.server`, `mcp.client`, `mcp.llm`, `chatbot`
+  - Document Q&A — `rag` (PDFBox parsing, OCR, chunking, embeddings, vector store)
+  - Remote services — `ecf.api`, `ecf.host`, `ecf.consumer` (two-JVM topology over ECF Generic)
+  - Spike/PoC — `spike.api`, `spike.master`, `spike.detail`
+  - Test fragments — `imp.tests`, `mcp.api.tests`, `spike.tests`
+  - Packaging — `target`, `feature`, `distribution`
+- **Runtime surfaces**: Felix HTTP Jetty (port 8080), Felix WebConsole, MCP JSON-RPC servlet, OpenRouter LLM + embeddings bridge, Swing chatbot, ECF TCP transport (port 3288), Tesseract OCR subprocess
 - **Already wired**: serena MCP, context7 MCP (global), telegram plugin, chrome-devtools plugin, commit-commands plugin, superpowers skills
 
-**Three structural facts that shape every recommendation below**
+**Four structural facts that shape every recommendation below**
 
-1. **Manifest / Component-XML / Java class is a coherence triple.** Every DS service requires `META-INF/MANIFEST.MF` imports, an `OSGI-INF/<FQCN>.xml` descriptor, and a `@Component`-annotated class. Drift between any two = service won't bind at runtime.
-2. **`com.kk.pde.ds.mcp.server/.../tools/*.java` is textbook scaffolding.** Eight tools follow an identical ~45-line shape (`@Component(service = IMcpTool.class)` → `getName / getDescription / getInputSchema / execute`). Anything this repetitive is a templating target.
-3. **`mvn clean verify` is heavy** (Tycho target-platform resolution + p2 packaging — minutes long). Automation needs to lean on fast feedback (file coherence, manifest validation) rather than full rebuilds.
+1. **Manifest / Component-XML / Java class is a coherence triple.** Every DS service requires `META-INF/MANIFEST.MF` imports, an `OSGI-INF/<FQCN>.xml` descriptor, and a `@Component`-annotated class. Drift between any two = service won't bind at runtime. Note the descriptors are **hand-maintained and checked in**, not build-generated — the annotations are compile-time only (`resolution:=optional`), so nothing fails the build when they drift. Only the runtime notices.
+2. **`IMcpTool` implementations are textbook scaffolding.** There are now **nine**, spread across two bundles — seven in `com.kk.pde.ds.mcp.server/.../tools/` (`Calculator`, `DateTime`, `Echo`, `Greet`, `HttpFetch`, `BundleList`, `SystemInfo`) and two in `com.kk.pde.ds.rag/.../tool/` (`DocumentSearch`, `IngestDocuments`). All follow an identical ~45-line shape (`@Component(service = IMcpTool.class)` → `getName / getDescription / getInputSchema / execute`). Anything this repetitive is a templating target, and the cross-bundle spread proves the pattern travels.
+3. **`mvn clean verify` is heavy** (Tycho target-platform resolution + p2 packaging — minutes long), and **single-module builds do not work here**. Tycho resolves via OSGi `Import-Package` against the target platform plus the reactor, but the bundles declare no Maven-level `<dependencies>` — so `-pl <module>` (even with `-am`) fails resolution for anything importing a sibling's package. Only leaf bundles like `com.kk.pde.ds.api` build in isolation. Automation must lean on fast static feedback (file coherence, manifest validation), because there is no cheap partial rebuild to fall back on.
+4. **Dependency minimalism is a standing policy, not a preference.** Apache Tika and POI were rejected for dragging in slf4j 2.0, which would break Felix Health Check's `org.slf4j.helpers [1.7,2.0)` pin; OCR shells out to the Tesseract CLI rather than using Tess4J/JNA for the same reason. Any automation that proposes adding a library should surface this constraint rather than discover it at build time. See `com.kk.pde.ds.rag/README.md` for the rejection record.
 
 ---
 
@@ -41,7 +55,7 @@ Tailored automation recommendations for the **p.osgi.ds** project (OSGi Declarat
 | MCP | Why skip |
 |-----|----------|
 | Playwright / chrome-devtools | UI is **Swing**, not web |
-| Database MCPs (Postgres, Supabase, Prisma) | No database |
+| Database MCPs (Postgres, Supabase, Prisma) | No database *today* — but `com.kk.pde.ds.rag` stores vectors in `InMemoryVectorStore` behind a deliberately swappable `VectorStore` interface, sized for a pgvector backend. Revisit if that swap ever happens. |
 | Filesystem MCP | Read/Bash already cover this |
 | Memory MCP | serena's memory bank already does this |
 | Sentry MCP | No error-tracker integration in the repo |
@@ -71,7 +85,7 @@ disable-model-invocation: true
 ```
 
 ### 2. `mcp-tool` *(top pick — project skill)*
-**Why**: Look at `com.kk.pde.ds.mcp.server/src/.../tools/` — `CalculatorTool`, `DateTimeTool`, `EchoTool`, `GreetTool`, `HttpFetchTool`, `BundleListTool`, `SystemInfoTool` are essentially the same file with different bodies. A skill that takes a tool name + description + JSON-Schema and emits the class + DS descriptor turns 5 minutes of careful copy/paste into one command. Bonus: it can nudge a re-test via `com.kk.pde.ds.mcp.client/McpClient`.
+**Why**: Look at `com.kk.pde.ds.mcp.server/src/.../tools/` — `CalculatorTool`, `DateTimeTool`, `EchoTool`, `GreetTool`, `HttpFetchTool`, `BundleListTool`, `SystemInfoTool` are essentially the same file with different bodies, and `com.kk.pde.ds.rag/.../tool/` repeats the shape twice more from a different bundle. A skill that takes a tool name + description + JSON-Schema and emits the class + DS descriptor turns 5 minutes of careful copy/paste into one command. It should take the **target bundle** as an argument, since new tools no longer live only in `mcp.server`. Bonus: it can nudge a re-test via `com.kk.pde.ds.mcp.client/McpClient`.
 **Path**: `.claude/skills/mcp-tool/SKILL.md`
 **Invocation**: Both (user via `/mcp-tool weather …`; Claude when you say "add a tool that …").
 
@@ -134,8 +148,10 @@ A fast Python/bash script after any edit under `*/META-INF/MANIFEST.MF`, `*/OSGI
 ```
 Script `exit 0` silently on non-bundle paths; `exit 0` with stderr warning on drift.
 
-### 2. Heavy-build guard (PreToolUse on Bash)
-**Why**: `mvn clean verify` takes minutes on this Tycho project. Easy to fire by reflex; harder to wait out. A PreToolUse hook that matches `mvn` commands and warns when `clean` is combined with `verify` or `install` *without* a `-pl <module>` flag saves a lot of distracted waiting.
+### 2. Scoped-build guard (PreToolUse on Bash)
+**Why**: The reflex fix for a slow Tycho build is `-pl <module>` — and on this project that is a **trap**, not a speedup. Tycho resolves through OSGi `Import-Package`, but the bundles declare no Maven `<dependencies>`, so `-pl com.kk.pde.ds.rag` (with or without `-am`) dies on `Missing requirement: ... requires 'java.package; com.kk.pde.ds.mcp.api'` — a resolution error that reads like a real dependency bug and costs a few minutes to recognize. Only leaf bundles such as `com.kk.pde.ds.api` build alone.
+
+So the useful hook is the inverse of the obvious one: warn on `-pl`, not on its absence. Pair it with `-o` (offline) and `-DskipTests`, which *are* real speedups here.
 ```json
 {
   "hooks": {
@@ -143,12 +159,13 @@ Script `exit 0` silently on non-bundle paths; `exit 0` with stderr warning on dr
       "matcher": "Bash",
       "hooks": [{
         "type": "command",
-        "command": "case \"$CLAUDE_COMMAND\" in *'mvn clean verify'*|*'mvn clean install'*) [[ \"$CLAUDE_COMMAND\" != *'-pl '* ]] && echo 'WARN: full Tycho rebuild; add -pl <module> if scoped' >&2 ;; esac; exit 0"
+        "command": "case \"$CLAUDE_COMMAND\" in *mvn*-pl*) echo 'WARN: -pl usually fails on this Tycho reactor (no Maven-level deps between bundles); prefer a full build with -o -DskipTests' >&2 ;; esac; exit 0"
       }]
     }]
   }
 }
 ```
+For reference, the full reactor with `-o clean package -DskipTests` completes in well under a minute — it is `verify` (p2 packaging + product materialization) that is expensive, not compilation.
 
 ### 3. Target-platform-edit guard (PreToolUse on Edit/Write)
 **Why**: Editing `com.kk.pde.ds.target/*.target` invalidates Tycho's resolved cache. The next build needs `mvn -U` or `mvn clean` to actually pick up the change. Easy to forget; gives a build that mysteriously "doesn't see" your new dependency. A hook that matches `*.target` writes and prints "remember `mvn clean` next build" saves the head-scratching.
