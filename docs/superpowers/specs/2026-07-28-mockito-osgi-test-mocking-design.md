@@ -1,7 +1,7 @@
 # Mocking support for the OSGi test suites — design
 
 **Date:** 2026-07-28
-**Status:** Phase 1 implemented 2026-09-08 (target platform, `imp.tests` manifest, `GreetHealthCheckTest`). Phase 2 not started.
+**Status:** Implemented. Phase 1 on 2026-09-08 (`GreetHealthCheckTest`); phase 2 on 2026-09-08 (`MasterAppTest`, see the phase 2 notes for two deviations).
 **Scope:** Add Mockito to the Tycho test fragments, with beginner-oriented worked examples.
 
 ---
@@ -34,8 +34,8 @@ platform with `missingManifest="error"` exactly like the existing JUnit 5 locati
 |---|---|---|
 | `org.mockito:mockito-core:5.14.2` | `org.mockito.mockito-core` | the mocking API |
 | `org.mockito:mockito-junit-jupiter:5.14.2` | `org.mockito.junit-jupiter` | `@Mock` / `@InjectMocks` support |
-| `net.bytebuddy:byte-buddy:1.15.4` | `net.bytebuddy.byte-buddy` | generates mock classes at runtime |
-| `net.bytebuddy:byte-buddy-agent:1.15.4` | `net.bytebuddy.byte-buddy-agent` | attach support |
+| `net.bytebuddy:byte-buddy:1.18.13-jdk5` | `net.bytebuddy.byte-buddy` | generates mock classes at runtime (was 1.15.4, see phase 2 notes) |
+| `net.bytebuddy:byte-buddy-agent:1.18.13-jdk5` | `net.bytebuddy.byte-buddy-agent` | attach support |
 | `org.objenesis:objenesis:3.3` | `org.objenesis` | constructor-free instantiation |
 
 `org.mockito.junit-jupiter` imports `org.junit.jupiter.api.extension;version="[5.11,6)"`,
@@ -165,6 +165,25 @@ entries added to `com.kk.pde.ds.spike.tests`.
 
 Phase 2 scope is deliberately not fixed further here; it will be re-planned once phase 1
 is merged and the Equinox behaviour is known.
+
+**Phase 2 as implemented (2026-09-08).** Reading `MasterApp` invalidated the "headless AWT
+plus EDT flush" assumption: its only entry point builds `JFrame`s and reads the screen
+size, both of which throw `HeadlessException`, and CI has no display. Two deviations:
+
+1. *A visibility-only seam in the shipped bundle.* `MasterApp.buildPanels` and its `Panel`
+   holder became package-private. It creates only lightweight Swing components, so it runs
+   headless, and it is where every collaborator interaction lives (`listItems()` →
+   `thenReturn`; the selection listener → `ArgumentCaptor` and `InOrder`; the real
+   `CatalogServiceImpl` → `spy()`). `spike.tests` forces `-Djava.awt.headless=true` via the
+   surefire `argLine` so desktop and CI behave identically. `start()` gained a headless
+   guard, because SCR activates the real `MasterApp` inside the test framework — before
+   this, `mvn verify` opened App-1 windows on a desktop during the spike tests.
+2. *ByteBuddy bumped to 1.18.13-jdk5.* The `spy()` tests retransform `java.lang.Object`,
+   and ByteBuddy 1.15.4 refuses class-file version 70 when the test JVM is Java 26 (a
+   Homebrew Maven picks that up locally; CI is on 21). Mockito stays at 5.14.2: its
+   Jupiter adapter accepts JUnit `[5.11,6)`, whereas Mockito 5.23 needs `[5.13,6)` and
+   would drag a JUnit upgrade along. Mockito imports ByteBuddy as `[1.6,2.0)`, so the
+   newer ByteBuddy resolves cleanly.
 
 ---
 

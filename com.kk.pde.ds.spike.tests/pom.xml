@@ -18,6 +18,11 @@
 				<groupId>org.eclipse.tycho</groupId>
 				<artifactId>tycho-surefire-plugin</artifactId>
 				<version>${tycho.version}</version>
+				<configuration>
+					<!-- MasterAppTest builds Swing components; headless keeps it identical on a
+					     developer desktop and on display-less CI, and stops any window from opening. -->
+					<argLine>-Djava.awt.headless=true</argLine>
+				</configuration>
 			</plugin>
 		</plugins>
 	</build>

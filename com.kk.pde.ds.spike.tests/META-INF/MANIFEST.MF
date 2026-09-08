@@ -6,4 +6,6 @@ Bundle-Version: 1.0.0.qualifier
 Fragment-Host: com.kk.pde.ds.spike.master
 Bundle-RequiredExecutionEnvironment: JavaSE-17
 Require-Bundle: junit-jupiter-api;bundle-version="[5.12,6.0)",
- junit-jupiter-engine;bundle-version="[5.12,6.0)"
+ junit-jupiter-engine;bundle-version="[5.12,6.0)",
+ org.mockito.mockito-core;bundle-version="[5.14,6.0)",
+ org.mockito.junit-jupiter;bundle-version="[5.14,6.0)"

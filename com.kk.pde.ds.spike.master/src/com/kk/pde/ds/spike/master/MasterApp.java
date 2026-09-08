@@ -5,6 +5,7 @@ import java.awt.Color;
 import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.Font;
+import java.awt.GraphicsEnvironment;
 import java.awt.GridLayout;
 import java.awt.Point;
 import java.awt.Toolkit;
@@ -90,8 +91,8 @@ public class MasterApp {
 	private boolean minimized;           // whole-constellation collapsed?
 	private int anchorExpandedHeight;    // remembered so restore can re-expand the anchor
 
-	/** A built panel awaiting placement into one of the tiled frames. */
-	private static final class Panel {
+	/** A built panel awaiting placement into one of the tiled frames. Package-private for tests. */
+	static final class Panel {
 		final String name;
 		final JComponent content;
 		Panel(String name, JComponent content) { this.name = name; this.content = content; }
@@ -114,6 +115,10 @@ public class MasterApp {
 
 	@Activate
 	public void start() {
+		if (GraphicsEnvironment.isHeadless()) {
+			log.warn("MasterApp.start() — headless JVM, not opening App-1 windows");
+			return;
+		}
 		log.info("MasterApp.start() — launching App-1 anchor windows");
 		final ICatalogService svc = this.catalog;
 		SwingUtilities.invokeLater(() -> buildFrames(svc));
@@ -208,8 +213,12 @@ public class MasterApp {
 		return body;
 	}
 
-	/** Builds the four app panels independently so they can be split across frames. */
-	private List<Panel> buildPanels(ICatalogService svc) {
+	/**
+	 * Builds the four app panels independently so they can be split across frames.
+	 * Package-private so {@code MasterAppTest} can drive it headless: it creates only
+	 * lightweight Swing components, unlike {@link #buildFrames} which needs real windows.
+	 */
+	List<Panel> buildPanels(ICatalogService svc) {
 		List<Panel> panels = new ArrayList<>();
 
 		// --- CATALOG (the list, drives the shared selection) ---

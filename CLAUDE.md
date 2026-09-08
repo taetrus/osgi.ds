@@ -130,9 +130,9 @@ Test fragments (`eclipse-test-plugin`, run by tycho-surefire inside a live OSGi
 framework): `com.kk.pde.ds.imp.tests` (Greet, plus `GreetHealthCheckTest` — the Mockito
 tutorial: test doubles, `doThrow` for void methods, `verify`, `@Mock`/`@InjectMocks`),
 `com.kk.pde.ds.mcp.api.tests` (the shared `Json` parser), and `com.kk.pde.ds.spike.tests`
-(hosted by `spike.master`;
-covers the `DockLayout` grid math, the ECF-serialized value objects, and
-`CatalogServiceImpl` state).
+(hosted by `spike.master`; covers the `DockLayout` grid math, the ECF-serialized value
+objects, `CatalogServiceImpl` state, and `MasterAppTest` — Mockito part 2: `thenReturn`,
+`ArgumentCaptor`, `InOrder`, `spy()`, run headless via the fragment's surefire `argLine`).
 
 ## REST API
 
