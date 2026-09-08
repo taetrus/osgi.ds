@@ -113,3 +113,28 @@ Health Check (it pins `org.slf4j.helpers [1.7,2.0)`). Rather than migrate the wh
 runtime's logging (logback 1.3 + Aries SPI Fly + Felix HC upgrades), we extract
 directly: PDFBox for PDF (logs via commons-logging, not slf4j) and a small OOXML
 zip reader for Office formats. Zero disruption to the existing stack.
+
+## Why not firecrawl/pdf-inspector?
+
+Evaluated 2026-08-02 (v0.2.6) — <https://github.com/firecrawl/pdf-inspector>. It
+reads like an OCR replacement but is not one: its own README says it converts PDFs
+to Markdown "all without OCR." It is the *classifier* that decides which pages need
+OCR — Firecrawl's actual OCR is the proprietary GPU service behind their hosted
+`/parse`, not the open-source part. So it cannot replace `TesseractCliOcrEngine`.
+
+Nor is it worth adopting for the job it does do. There is no JVM binding (Rust,
+Python, Node and WASM only), so integration means shelling out to its `detect-pdf`
+CLI — the same subprocess pattern we already have, for a second external binary.
+It ships no prebuilt binaries either (`cargo install pdf-inspector`), so it would
+add a Rust toolchain to the host requirements, strictly worse than
+`brew install tesseract`. And it would displace **PDFBox**, not Tesseract — but
+PDFBox stays regardless, both for the commons-logging reason above and because
+`PDFRenderer` does our page rasterization, which pdf-inspector cannot do.
+
+One idea from it is worth borrowing eventually. It classifies pages by sampling
+content streams, which is more precise than our character-count heuristic
+(`rag.ocr.min.chars.per.page`, see `extractPdfWithOcr` in
+`internal/MultiFormatDocumentParser`): a page with a sparse-but-real text layer —
+a chart with a short caption — is treated as a scan and rasterized at 300 DPI
+needlessly. That is wasted work, not wrong output, so it stays an idea rather than
+a bug. Re-check the repo if it ever grows a JVM binding.
