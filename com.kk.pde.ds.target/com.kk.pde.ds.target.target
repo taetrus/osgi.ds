@@ -250,6 +250,45 @@
 				</dependency>
 			</dependencies>
 		</location>
+		<!-- Mockito — TEST-ONLY. Required by the eclipse-test-plugin fragments (via
+		     Require-Bundle) and never listed in the product or feature, so it never ships.
+		     All five jars carry valid OSGi manifests (missingManifest="error"); enumerated
+		     explicitly at depth="none" like the JUnit location above. ByteBuddy generates
+		     mock classes at run time, Objenesis instantiates them without a constructor. -->
+		<location includeDependencyDepth="none" includeDependencyScopes="compile" missingManifest="error" type="Maven">
+			<dependencies>
+				<dependency>
+					<groupId>org.mockito</groupId>
+					<artifactId>mockito-core</artifactId>
+					<version>5.14.2</version>
+					<type>jar</type>
+				</dependency>
+				<dependency>
+					<groupId>org.mockito</groupId>
+					<artifactId>mockito-junit-jupiter</artifactId>
+					<version>5.14.2</version>
+					<type>jar</type>
+				</dependency>
+				<dependency>
+					<groupId>net.bytebuddy</groupId>
+					<artifactId>byte-buddy</artifactId>
+					<version>1.15.4</version>
+					<type>jar</type>
+				</dependency>
+				<dependency>
+					<groupId>net.bytebuddy</groupId>
+					<artifactId>byte-buddy-agent</artifactId>
+					<version>1.15.4</version>
+					<type>jar</type>
+				</dependency>
+				<dependency>
+					<groupId>org.objenesis</groupId>
+					<artifactId>objenesis</artifactId>
+					<version>3.3</version>
+					<type>jar</type>
+				</dependency>
+			</dependencies>
+		</location>
 		<!-- Eclipse test harness — tycho-surefire runs the eclipse-test-plugin inside a
 		     live Equinox instance, which needs org.eclipse.core.runtime and its transitive
 		     closure (app/registry/preferences/contenttype/…). Pulled at depth="infinite"

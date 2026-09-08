@@ -1,7 +1,7 @@
 # Mocking support for the OSGi test suites — design
 
 **Date:** 2026-07-28
-**Status:** Approved, not yet implemented
+**Status:** Phase 1 implemented 2026-09-08 (target platform, `imp.tests` manifest, `GreetHealthCheckTest`). Phase 2 not started.
 **Scope:** Add Mockito to the Tycho test fragments, with beginner-oriented worked examples.
 
 ---
@@ -112,6 +112,14 @@ A throwaway test that only calls `mock(IGreet.class)` and `verify(...)`, run wit
 
 The spike file is deleted once it has proved the point; it is scaffolding, not a
 deliverable.
+
+**Spike result (2026-09-08):** passed on the first run with no escalation. Mockito 5 uses
+the *inline* mock maker by default, which attaches the ByteBuddy agent and retransforms
+the mocked type in place rather than generating a subclass, so no generated class ever
+needs to see two bundles at once. The classloader risk above applies to the subclass mock
+maker only. Expected noise in the test log: a JDK warning that Mockito is "self-attaching",
+which future JDKs may block; if that happens, pass the agent via `-javaagent` in the
+`tycho-surefire-plugin` `argLine`.
 
 ### 4. Phase 1 deliverable
 
