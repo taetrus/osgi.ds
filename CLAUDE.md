@@ -8,13 +8,18 @@ This is an OSGi Declarative Services (DS) project built with Maven Tycho 4.0.13.
 
 > **Security:** The HTTP surface (port 8080) is intentionally unauthenticated and is meant for **localhost only**. See [`SECURITY.md`](SECURITY.md) for the known exposures (`/mcp`, `/llm/chat`, `ingest_documents`, `http_fetch`) and the checklist to complete before exposing any of it beyond localhost.
 
-## Additional Instructions
+## Documentation Map
 
-For every project, write a detailed FOR[kerem].md file that explains the whole project in plain language.
-
-Explain the technical architecture, the structure of the codebase and how the various parts are connected, the technologies used, why we made these technical decisions, and lessons I can learn from it (this should include the bugs we ran into and how we fixed them, potential pitfalls and how to avoid them in the future, new technologies used, how good engineers think and work, best practices, etc).
-
-It should be very engaging to read; don't make it sound like boring technical documentation/textbook. Where appropriate, use analogies and anecdotes to make it more understandable and memorable.
+| File | Read it for |
+|------|-------------|
+| `README.md` | Full reference: per-feature run guide (macOS & Windows), REST, chatbot, RAG, OCR, testing (section 13), troubleshooting |
+| `FOR_Kerem.md`, `FOR_Kerem_RAG.md` | Narrative "how and why" write-ups (ECF remote services; RAG), including the bugs hit and lessons learned |
+| `docs/architecture.md` | Component and service wiring diagram |
+| `docs/spike-isolation-results.md`, `docs/multi-jvm-isolation-journey.md`, `docs/monolith-to-multi-jvm-migration.md` | The spike: multi-frame / multi-JVM UI design and findings |
+| `docs/superpowers/specs/` | Design specs written before implementation (e.g. Mockito in the OSGi test fragments) |
+| `MCP_SERVER_TESTING.md` | Manual JSON-RPC test procedure for the MCP server |
+| `SECURITY.md` | Known exposures on the unauthenticated localhost HTTP surface |
+| `com.kk.pde.ds.rag/README.md` | RAG configuration reference and verification record |
 
 ## Build Commands
 
@@ -25,12 +30,57 @@ mvn clean verify
 # Quick build without tests
 mvn clean package -DskipTests
 
-# Build specific module
-mvn clean package -pl com.kk.pde.ds.api
+# Build specific module — for anything with OSGi deps, list its upstream modules too (see Testing)
+mvn clean package -pl com.kk.pde.ds.target,com.kk.pde.ds.api
 
 # Resume failed build from distribution
 mvn verify -rf :distribution
 ```
+
+Build requires JDK 17+ (Tycho 4). The product itself still runs on Java 8+.
+
+## Testing
+
+Tests are `eclipse-test-plugin` fragments run by tycho-surefire inside a live Equinox
+(`integration-test` phase, so `mvn verify`, not `mvn test`). 48 tests across three
+fragments, JUnit 5 + Mockito; every test class's Javadoc is a short tutorial.
+
+```bash
+mvn clean verify                                   # all tests; what CI runs (JDK 21)
+
+# One fragment — list the target module, the host and the host's project bundles explicitly
+mvn verify -pl com.kk.pde.ds.target,com.kk.pde.ds.api,com.kk.pde.ds.imp,com.kk.pde.ds.imp.tests
+mvn verify -pl com.kk.pde.ds.target,com.kk.pde.ds.mcp.api,com.kk.pde.ds.mcp.api.tests
+mvn verify -pl com.kk.pde.ds.target,com.kk.pde.ds.spike.api,com.kk.pde.ds.spike.master,com.kk.pde.ds.spike.tests
+
+# One class (or method with -Dtest='Class#method')
+mvn verify -pl com.kk.pde.ds.target,com.kk.pde.ds.spike.api,com.kk.pde.ds.spike.master,com.kk.pde.ds.spike.tests -Dtest=MasterAppTest
+```
+
+- **`-pl <fragment> -am` does not work.** Maven cannot see the fragment-to-host link (it is an
+  OSGi manifest header), so `-am` builds only the parent and fails with
+  `requires osgi.bundle ... but it could not be found`. List the modules by hand as above.
+- **Local Maven may fork a different JDK than `java -version` shows.** Homebrew `mvn` uses its
+  own OpenJDK (26) unless `JAVA_HOME` is set; CI is Temurin 21. Reproduce CI with
+  `JAVA_HOME=$(/usr/libexec/java_home -v 21) mvn clean verify`. This is why ByteBuddy is
+  pinned to 1.18.13 in the target platform.
+- Expected log noise: a Mockito "self-attaching" warning, and `ERROR ... Health Check failed`
+  lines from tests that deliberately force the catch branch. Trust the `Tests run:` totals.
+- `com.kk.pde.ds.spike.tests` forces `-Djava.awt.headless=true`; `MasterAppTest` drives the
+  package-private `MasterApp.buildPanels` seam on the EDT via `invokeAndWait`.
+- Mockito, ByteBuddy and Objenesis are test-only target-platform locations. They must never
+  appear in `distribution/target/products/**` or the p2 repository.
+
+Full detail, including what each test class teaches: README section 13.
+
+## Conventions
+
+- Commits: conventional subjects with a scope, e.g. `feat(rag): ...`, `fix(ecf): ...`,
+  `test(spike): ...`, `docs(claude): ...`, `chore(serena): ...`.
+- Work lands on `main` via PRs from `feat/*` or `docs/*` branches.
+- CI: `.github/workflows/build.yml` runs `mvn --batch-mode clean verify` on Temurin 21.
+- Dependency minimalism is a deliberate theme (hand-rolled JSON, OOXML-as-zip, Tesseract via
+  subprocess). Prefer that over adding a library, and never add anything that drags slf4j 2.x.
 
 ## Build Outputs
 
@@ -43,7 +93,7 @@ After a successful build:
 
 ## Running the Application
 
-> **Java requirement**: Java 8+ required at runtime.
+> **Java requirement**: Java 8+ at runtime (the run scripts and CI actually use 21).
 
 **Simplest — run directly from the source tree (scripts auto-detect OS and product path):**
 
@@ -104,7 +154,7 @@ The DS tab shows all Declarative Services components and their status.
 ## Module Structure
 
 ```
-com.kk.pde.ds.target   → Target platform definition (Eclipse 2024-12)
+com.kk.pde.ds.target   → Target platform definition (Maven-sourced; Equinox 3.23 / 2025-03 line)
 com.kk.pde.ds.api      → IGreet interface (service contract)
 com.kk.pde.ds.imp      → Greet implementation (service provider)
 com.kk.pde.ds.app      → App consumer (@Reference injection, launches Clock + Chatbot UI)
@@ -126,13 +176,10 @@ distribution           → p2 repository + product builds
 fatjar                 → Standalone fat-JAR launcher (built separately, not in the reactor)
 ```
 
-Test fragments (`eclipse-test-plugin`, run by tycho-surefire inside a live OSGi
-framework): `com.kk.pde.ds.imp.tests` (Greet, plus `GreetHealthCheckTest` — the Mockito
-tutorial: test doubles, `doThrow` for void methods, `verify`, `@Mock`/`@InjectMocks`),
-`com.kk.pde.ds.mcp.api.tests` (the shared `Json` parser), and `com.kk.pde.ds.spike.tests`
-(hosted by `spike.master`; covers the `DockLayout` grid math, the ECF-serialized value
-objects, `CatalogServiceImpl` state, and `MasterAppTest` — Mockito part 2: `thenReturn`,
-`ArgumentCaptor`, `InOrder`, `spy()`, run headless via the fragment's surefire `argLine`).
+Test fragments (not shipped): `com.kk.pde.ds.imp.tests` (host `imp`: `GreetTest`,
+`GreetHealthCheckTest`), `com.kk.pde.ds.mcp.api.tests` (host `mcp.api`: `JsonTest`),
+`com.kk.pde.ds.spike.tests` (host `spike.master`: `DockLayoutTest`, `SpikeValueObjectsTest`,
+`CatalogServiceImplTest`, `MasterAppTest`). See Testing above.
 
 ## REST API
 
@@ -174,13 +221,10 @@ The `com.kk.pde.ds.chatbot` bundle provides a Swing-based chat interface for int
 - MCP tool integration — LLM can call registered tools during conversations
 - Clear history button to reset conversation
 
-**Configuration (environment variables or system properties):**
-
-| Env Var | System Property | Default | Purpose |
-|---------|----------------|---------|---------|
-| `OPENROUTER_API_KEY` | `openrouter.api.key` | — | API key (required) |
-| — | `openrouter.model` | `google/gemini-flash-1.5` | Default model ID |
-| — | `openrouter.base.url` | `https://openrouter.ai/api/v1` | API base URL |
+**Configuration:** `OPENROUTER_API_KEY` / `-Dopenrouter.api.key` (required),
+`-Dopenrouter.model` (default `google/gemini-flash-1.5`), `-Dopenrouter.base.url`
+(default `https://openrouter.ai/api/v1`; any OpenAI-compatible endpoint works). The RAG
+embeddings client reads the same `openrouter.*` properties. Full table: README "Chatbot UI".
 
 **Service binding flow:**
 1. `OpenRouterAgent` injects `IMcpToolRegistry` for tool access
@@ -210,50 +254,18 @@ so **no existing module changed**.
 **Supported formats:** `.pdf`, `.docx`, `.pptx`, `.html`/`.htm`, `.txt`/`.md`, and — when
 OCR is available — standalone image files (`.png`/`.jpg`/`.jpeg`/`.tif`/`.tiff`/`.bmp`/`.gif`).
 
-**Configuration (system properties / env vars):**
+**Configuration:** `-Drag.docs.dir=<folder>` auto-ingests at startup; embeddings use the
+chat client's `openrouter.*` key and base URL plus `-Dopenrouter.embeddings.model` (default
+`intfloat/multilingual-e5-large`); OCR is on by default when a `tesseract` binary is on the
+host (`rag.ocr.enabled`, `rag.ocr.binary`, `rag.ocr.lang`, `rag.ocr.dpi`, ...). Full
+property table and the MCP `curl` examples for `ingest_documents` / `document_search`:
+README "Document Q&A (RAG)" and `com.kk.pde.ds.rag/README.md`.
 
-| Property | Env var | Default | Purpose |
-|----------|---------|---------|---------|
-| `openrouter.api.key` | `OPENROUTER_API_KEY` | — | API key (shared with the chat client) |
-| `openrouter.base.url` | — | `https://openrouter.ai/api/v1` | embeddings POSTed to `{base}/embeddings` |
-| `openrouter.embeddings.model` | `OPENROUTER_EMBEDDINGS_MODEL` | `intfloat/multilingual-e5-large` | embedding model |
-| `rag.docs.dir` | — | — | folder auto-ingested at startup (recursive, daemon thread) |
-| `rag.embedding.query.prefix` | — | `query: ` | E5 query prefix (blank it for non-E5 models like qwen3) |
-| `rag.embedding.passage.prefix` | — | `passage: ` | E5 passage prefix |
-| `rag.chunk.target.tokens` | — | `400` | chunk size |
-| `rag.chunk.overlap.tokens` | — | `50` | chunk overlap |
-| `rag.ocr.enabled` | `RAG_OCR_ENABLED` | `true` | OCR master switch (see OCR section below) |
-| `rag.ocr.binary` | — | `tesseract` | path to the Tesseract binary |
-| `rag.ocr.lang` | — | `eng` | Tesseract `-l` value, e.g. `eng+tur` |
-| `rag.ocr.dpi` | — | `300` | raster DPI for scanned PDF pages |
-| `rag.ocr.min.chars.per.page` | — | `16` | below this a PDF page is treated as a scan |
-| `rag.ocr.timeout.seconds` | — | `60` | per-image OCR subprocess timeout |
-| `rag.ocr.max.images.per.doc` | — | `200` | per-document embedded-image cap |
-
-**Use it:** set `-Drag.docs.dir` at startup (see "Running the Application"), or ingest at
-runtime via the chatbot (the model calls `ingest_documents`) or directly over the MCP HTTP
-endpoint:
-
-```bash
-# Ingest a folder
-curl -s -X POST http://localhost:8080/mcp -H 'Content-Type: application/json' -d \
- '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ingest_documents","arguments":{"path":"/path/to/docs"}}}'
-
-# Search (the LLM normally calls this itself during a chat)
-curl -s -X POST http://localhost:8080/mcp -H 'Content-Type: application/json' -d \
- '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"document_search","arguments":{"query":"your question","top_k":"5"}}}'
-```
-
-**OCR (text-on-images & scanned PDFs):** the parser recovers text rendered as pixels when a
-Tesseract binary is available. Per PDF page: if the text layer is empty/sparse
-(< `rag.ocr.min.chars.per.page`) the page is treated as a **scan** — rasterized via PDFBox
-`PDFRenderer` at `rag.ocr.dpi` and OCR'd whole; otherwise its text is kept and each embedded
-raster image on the page is OCR'd and appended. For `.docx`, images under `word/media/` are
-OCR'd too. (`.pptx` embedded-image OCR is not yet implemented.) OCR is the **only** step that
-shells out — `OcrEngine`/`TesseractCliOcrEngine` invoke `tesseract <img> stdout -l <lang>` as
-a subprocess (no Tess4J/JNA, no new bundle deps). Requires the binary on the host
-(`brew install tesseract` / `apt install tesseract-ocr`); if it is absent or
-`rag.ocr.enabled=false`, ingestion silently falls back to text-only. Use
+**OCR:** scanned PDF pages (text layer below `rag.ocr.min.chars.per.page`) are rasterized
+with PDFBox `PDFRenderer` and OCR'd whole; embedded images on text pages and `.docx`
+`word/media/` images are OCR'd and appended (`.pptx` images not yet). OCR is the **only**
+step that shells out (`tesseract <img> stdout -l <lang>`); without the binary or with
+`rag.ocr.enabled=false` ingestion silently falls back to text-only. Use
 `-Djava.awt.headless=true` for server runs (PDFBox/ImageIO use AWT).
 
 **Key facts / pitfalls:**
@@ -298,6 +310,13 @@ mvn clean verify
 The consumer logs `Remote response: Hello, ECF! (served remotely by host)`. At the
 consumer's `osgi>` prompt, `ecf:greet World` re-invokes on demand.
 
+**Spike (multi-frame / multi-JVM UI) — same two-terminal pattern over ECF, port 3289:**
+```bash
+./distribution/scripts/run-spike-master.sh   # terminal 1 — publishes DockLayout, tiles App-1 frames
+./distribution/scripts/run-spike-detail.sh   # terminal 2 — tiles its own frames from the shared numbers
+```
+Design and findings: the spike documents listed in the Documentation Map.
+
 **Flow:**
 1. Host `RemoteGreetImpl` registers `IRemoteGreet` with `service.exported.*` properties
 2. ECF RSA exports it via the Generic server (TCP socket on :3288)
@@ -322,7 +341,8 @@ consumer's `osgi>` prompt, `ecf:greet World` re-invokes on demand.
 
 | File | Purpose |
 |------|---------|
-| `com.kk.pde.ds.target/*.target` | Target platform — Maven-location dependencies (no p2 repo URLs), incl. JUnit 5 + Equinox test harness |
+| `com.kk.pde.ds.target/*.target` | Target platform — Maven-location dependencies (no p2 repo URLs); every bundle enumerated explicitly, incl. test-only JUnit 5 and Mockito locations |
+| `.github/workflows/build.yml` | CI: `mvn clean verify` on Temurin 21 |
 | `distribution/p2.product` | Product definition (bundles, start levels) |
 | `distribution/category.xml` | p2 repository category structure |
 | `*/META-INF/MANIFEST.MF` | OSGi bundle metadata |
@@ -330,9 +350,10 @@ consumer's `osgi>` prompt, `ecf:greet World` re-invokes on demand.
 
 ## Technology Stack
 
-- **Java 8+** (all bundles and the fat JAR launcher target Java 8 bytecode)
+- **Java 8+** at runtime (all shipped bundles and the fat JAR launcher target Java 8 bytecode); JDK 17+ to build; test fragments are `JavaSE-17`
 - **Tycho 4.0.13** (Maven OSGi build)
-- **Eclipse 2024-12** target platform
+- **Equinox 3.23 (2025-03 line)** target platform, resolved from Maven Central with no p2 URLs
+- **JUnit 5.12 + Mockito 5.14** (test-only, never shipped)
 - **OSGi Declarative Services** via annotations
 - **Felix SCR** runtime
 - **Felix HTTP Jetty** with HTTP Whiteboard for REST API

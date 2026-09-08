@@ -54,7 +54,7 @@ This workspace is a **showcase repository**: a fully-functional Java 8 OSGi appl
 | **ECF Remote Services (RSA)** | A DS `@Reference` satisfied across two JVMs over `ecftcp://`, with file-based EDEF discovery (no ZooKeeper) |
 | **Spike: multi-frame / multi-JVM UI** | Two JVMs tile one screen as a single combined UI, sharing only a few integers (`DockLayout`) over ECF; draggable anchor window all frames follow |
 | **Fat JAR launcher** | The whole OSGi app as one standalone `java -jar` executable — an alternative packaging next to the p2 product |
-| **In-framework testing** | `eclipse-test-plugin` fragments run by tycho-surefire *inside a live Equinox* — tests implicitly verify manifests and bundle resolution |
+| **In-framework testing** | `eclipse-test-plugin` fragments run by tycho-surefire *inside a live Equinox* — tests implicitly verify manifests and bundle resolution; JUnit 5 + Mockito, 48 tests written as a step-by-step tutorial |
 | **Zero-dependency engineering** | A recurring theme: hand-rolled JSON parser, OOXML-as-zip parsing (no POI/Tika), Tesseract via subprocess (no Tess4J) |
 | **Security posture** | [`SECURITY.md`](SECURITY.md) documents the intentionally-unauthenticated localhost HTTP surface and the hardening checklist |
 | **File Install** | Auto-loading configuration files at runtime |
@@ -409,24 +409,122 @@ java -jar target\osgi-fatjar.jar
 
 Same services as the product: WebConsole, REST, MCP, chatbot.
 
-### 13. In-Framework Tests (tycho-surefire)
+### 13. In-Framework Tests (tycho-surefire + JUnit 5 + Mockito)
 
 **What it shows:** `eclipse-test-plugin` **fragments** that tycho-surefire runs inside
 a live Equinox framework — so a manifest typo or unresolvable import fails the test
-run even when the Java compiles. Three fragments, 36 tests: `com.kk.pde.ds.imp.tests`
-(Greet), `com.kk.pde.ds.mcp.api.tests` (the shared zero-dependency `Json` parser —
-including injection-defense cases), and `com.kk.pde.ds.spike.tests` (the `DockLayout`
-grid math, ECF-serialized value objects, catalog service state).
+run even when the Java compiles. Three fragments, seven test classes, **48 tests**,
+all with beginner-oriented Javadoc: every class comment is a short tutorial on one
+testing idea, and the classes are meant to be read in the order below.
+
+#### What is tested
+
+| Fragment | Host bundle | Test class | Tests | What it covers / teaches |
+|----------|-------------|------------|-------|--------------------------|
+| `com.kk.pde.ds.imp.tests` | `com.kk.pde.ds.imp` | `GreetTest` | 1 | **Start here.** The smallest possible unit test: Arrange–Act–Assert, `@Test`, how JUnit 5 finds test methods, why each test gets a fresh instance |
+| `com.kk.pde.ds.mcp.api.tests` | `com.kk.pde.ds.mcp.api` | `JsonTest` | 13 | The hand-rolled zero-dependency `Json` parser: round trips, numeric vs string ids, control characters and `\uXXXX` escapes, malformed input, and **JSON-RPC injection defence** (a crafted `id` cannot smuggle extra fields into the response) |
+| `com.kk.pde.ds.spike.tests` | `com.kk.pde.ds.spike.master` | `DockLayoutTest` | 8 | Pure grid math shared by both spike JVMs: slot interleaving, left-to-right wrapping, column clamping, balanced `distribute()` — "happy path first, then the edges" |
+| | | `SpikeValueObjectsTest` | 4 | The two contracts a value object must honour before it can cross ECF: `equals`/`hashCode`, and a `Serializable` round trip |
+| | | `CatalogServiceImplTest` | 10 | A DS component's state, tested by calling its `@Activate` method directly from `@BeforeEach`: seeding, defensive copies, selection round trip, `DockState` snapshot |
+| `com.kk.pde.ds.imp.tests` | `com.kk.pde.ds.imp` | `GreetHealthCheckTest` | 6 | **Mockito, part 1.** Why a test double is needed (the `catch` branch is unreachable with the real `Greet`); a hand-written double vs `mock()`; `doThrow(...).when(mock).greet()` for **void** methods; `verify` / `times(1)` / `verifyNoMoreInteractions`; `@ExtendWith(MockitoExtension.class)` + `@Mock` + `@InjectMocks` into a **private `@Reference` field** |
+| `com.kk.pde.ds.spike.tests` | `com.kk.pde.ds.spike.master` | `MasterAppTest` | 6 | **Mockito, part 2.** Value-returning collaborators: `when(...).thenReturn(...)`, `ArgumentCaptor`, `InOrder`, `spy()` and its two gotchas (a spy is a copy; stub with `doReturn`, not `when`); driving Swing code headless via `SwingUtilities.invokeAndWait` |
+
+Suggested reading order: `GreetTest` → `JsonTest` / `DockLayoutTest` /
+`SpikeValueObjectsTest` / `CatalogServiceImplTest` → `GreetHealthCheckTest` →
+`MasterAppTest`. The design notes for the two Mockito suites, including the spike
+that proved Mockito works inside Equinox, are in
+[`docs/superpowers/specs/2026-07-28-mockito-osgi-test-mocking-design.md`](docs/superpowers/specs/2026-07-28-mockito-osgi-test-mocking-design.md).
+
+#### How it works
+
+1. **Each test module is an OSGi fragment, not a bundle.** Its manifest declares
+   `Fragment-Host: <bundle under test>`, and its `pom.xml` uses
+   `<packaging>eclipse-test-plugin</packaging>`. A fragment shares its host's
+   classloader, so test code sees package-private members (`MasterApp.buildPanels`)
+   and can even reach private fields by reflection (`GreetHealthCheck.greetService`),
+   while the shipped host bundle stays free of any test code or test dependency.
+2. **tycho-surefire provisions a throwaway OSGi runtime.** In the `integration-test`
+   phase (so `mvn verify`, not `mvn test`) it assembles a minimal Equinox from the
+   target platform containing the host, the fragment, everything they transitively
+   require, the JUnit 5 bundles and — for the two Mockito fragments — Mockito. It then
+   forks a JVM, boots the framework, resolves and starts the bundles, and runs the
+   tests through the JUnit Platform *inside* that running framework.
+3. **The consequence is the whole point.** If a manifest has an unresolvable
+   `Import-Package`, or a fragment's `Require-Bundle` version range misses, the
+   fragment never resolves and the test run fails — even though `javac` was happy.
+   Compiling proves syntax; this proves the bundles can actually wire together.
+4. **Test dependencies live in the target platform, not the product.** The
+   `.target` file has two test-only `<location>` blocks: JUnit 5.12.2 (Jupiter API +
+   engine, Platform, opentest4j, apiguardian) and Mockito 5.14.2 (`mockito-core`,
+   `mockito-junit-jupiter`, ByteBuddy 1.18.13, ByteBuddy agent, Objenesis). Each
+   fragment pulls what it needs with `Require-Bundle` ranges. Nothing here is listed in
+   `feature.xml` or `p2.product`, so none of it ships.
+5. **Mockito inside OSGi works without special wiring** because Mockito 5's default
+   *inline* mock maker attaches a Java agent and rewrites the mocked class's bytecode in
+   place, rather than generating a subclass that would need to see two bundles'
+   classloaders at once. The `Mockito is currently self-attaching…` and
+   `WARNING: A Java agent has been loaded dynamically` lines in the build log are
+   expected, not errors.
+6. **Swing under test runs headless.** `com.kk.pde.ds.spike.tests` sets
+   `-Djava.awt.headless=true` in its surefire `argLine`, so `MasterAppTest` behaves
+   identically on a developer desktop and on display-less CI. The tests call the
+   package-private `buildPanels()` (a deliberate *test seam*: lightweight components
+   only), and `MasterApp.start()` has a headless guard so SCR activating the real
+   component during the test run does not open windows mid-build.
+
+#### How to run
 
 ```bash
-# Both OSes — tests run as part of the build
+# Everything — tests run as part of the normal build. This is exactly what CI does (JDK 21).
 mvn clean verify
 
-# One fragment only (note: builds the reactor up to it)
-mvn clean verify -pl com.kk.pde.ds.spike.tests -am
+# One fragment. List its OSGi upstream modules explicitly — see the first gotcha below.
+mvn verify -pl com.kk.pde.ds.target,com.kk.pde.ds.api,com.kk.pde.ds.imp,com.kk.pde.ds.imp.tests
+mvn verify -pl com.kk.pde.ds.target,com.kk.pde.ds.mcp.api,com.kk.pde.ds.mcp.api.tests
+mvn verify -pl com.kk.pde.ds.target,com.kk.pde.ds.spike.api,com.kk.pde.ds.spike.master,com.kk.pde.ds.spike.tests
+
+# One test class, or one test method, inside a fragment
+mvn verify -pl com.kk.pde.ds.target,com.kk.pde.ds.spike.api,com.kk.pde.ds.spike.master,com.kk.pde.ds.spike.tests -Dtest=MasterAppTest
+mvn verify -pl com.kk.pde.ds.target,com.kk.pde.ds.spike.api,com.kk.pde.ds.spike.master,com.kk.pde.ds.spike.tests -Dtest='MasterAppTest#spyRunsTheRealServiceAndRecordsCalls'
+
+# Skip tests entirely
+mvn clean package -DskipTests
 ```
 
-Reports land in `<fragment>/target/surefire-reports/`.
+The commands are identical on Windows (`cmd` or PowerShell); quote the `-Dtest`
+value as shown when it contains `#`.
+
+Results print to the console as `Tests run: N, Failures: 0, Errors: 0, Skipped: 0` per
+class and per fragment. Reports land in `<fragment>/target/surefire-reports/`: one
+`*.txt` summary and one `TEST-*.xml` (with per-method timings and any stack traces)
+per test class.
+
+#### Gotchas
+
+- **`-pl <fragment> -am` does not work.** Maven's `--also-make` follows *pom*
+  dependencies, but a fragment's link to its host is an OSGi manifest header the Maven
+  reactor cannot see, so `-am` builds only the parent and fails with
+  `requires osgi.bundle com.kk.pde.ds.imp but it could not be found`. Always list
+  `com.kk.pde.ds.target`, the host, and the host's own project bundles by hand, as
+  above. When in doubt, `mvn clean verify` for the whole reactor is the reference run.
+- **Your local Maven may fork a different JDK than `java -version` shows.** Homebrew's
+  `mvn` brings its own OpenJDK (26 at the time of writing) when `JAVA_HOME` is unset,
+  while CI runs Temurin 21. That is why ByteBuddy is pinned to 1.18.13 — the older
+  1.15.4 refused Java 26 class files as soon as `spy()` retransformed
+  `java.lang.Object`. To reproduce CI exactly:
+  `JAVA_HOME=$(/usr/libexec/java_home -v 21) mvn clean verify`.
+- **`ERROR … Greet Service Health Check failed` lines in the log are expected.** Three
+  of the `GreetHealthCheckTest` tests deliberately force the `catch` branch, and the
+  component logs at ERROR level before reporting `CRITICAL`. Failures are counted in
+  the `Tests run:` line, not spotted by grepping for "ERROR".
+- **Nested-class reporting looks odd.** Surefire's text summary credits all six
+  `GreetHealthCheckTest` tests to the `GreetHealthCheckTest$WithAnnotations` report
+  and shows `Tests run: 0` for the outer class. The fragment total (7 for `imp.tests`)
+  is the number to trust.
+- **Mockito must never ship.** After a full build, `distribution/target/products/**`
+  and `distribution/target/repository/plugins/` must contain no `org.mockito.*`,
+  `net.bytebuddy.*` or `org.objenesis` bundle. If one appears, something added a test
+  bundle to the feature or product.
 
 ### 14. Security Posture
 
@@ -542,9 +640,22 @@ p.osgi.ds/
 │   ├── pom.xml
 │   └── feature.xml
 │
-├── com.kk.pde.ds.imp.tests/          # Test Bundle (disabled)
-│   ├── pom.xml
-│   └── src/.../GreetTest.java
+├── com.kk.pde.ds.imp.tests/          # Test fragment (host: imp) — tycho-surefire, in-framework
+│   ├── pom.xml                       # packaging: eclipse-test-plugin
+│   ├── META-INF/MANIFEST.MF          # Fragment-Host + Require-Bundle: JUnit 5, Mockito
+│   └── src/test/java/.../
+│       ├── GreetTest.java            # "Start here" — the smallest unit test
+│       └── GreetHealthCheckTest.java # Mockito part 1: doubles, doThrow, verify, @InjectMocks
+│
+├── com.kk.pde.ds.mcp.api.tests/      # Test fragment (host: mcp.api)
+│   └── src/test/java/.../JsonTest.java   # Json parser round trips + injection defence
+│
+├── com.kk.pde.ds.spike.tests/        # Test fragment (host: spike.master), headless argLine
+│   └── src/test/java/.../
+│       ├── DockLayoutTest.java       # Grid math
+│       ├── SpikeValueObjectsTest.java# equals/hashCode + Serializable round trip
+│       ├── CatalogServiceImplTest.java # DS component state via @BeforeEach
+│       └── MasterAppTest.java        # Mockito part 2: thenReturn, captor, InOrder, spy
 │
 └── distribution/                     # Product & Repository
     ├── pom.xml
@@ -1994,7 +2105,7 @@ java -jar ... ...                         # Missing flag entirely
 |--------|-------|
 | Maven Modules | 22 in the Tycho reactor (+ `fatjar` built separately) |
 | Application Bundles | 16 (api, imp, app, rest, mcp.api/server/client/llm, chatbot, rag, ecf.api/host/consumer, spike.api/master/detail) |
-| Test Fragments | 3 (imp.tests, mcp.api.tests, spike.tests) — 36 tests inside a live Equinox |
+| Test Fragments | 3 (imp.tests, mcp.api.tests, spike.tests) — 7 classes, 48 tests inside a live Equinox (JUnit 5 + Mockito) |
 | DS Components | 31 (`OSGI-INF/*.xml` descriptors) |
 | MCP Tools | 9 (echo, greet, calculator, datetime, bundle_list, system_info, http_fetch + document_search, ingest_documents) |
 | Health Checks | 7 (1 custom + 6 file-based) |
